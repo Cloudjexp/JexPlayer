@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
+import com.cloudjex.jexplayer.viewmodel.RepeatMode
 
 
 @Composable
@@ -40,6 +41,7 @@ fun HomeScreen(viewModel: MusicViewModel) {
     val currentSongId by viewModel.currentSongId.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val isShuffleEnabled by viewModel.isShuffleEnabled.collectAsState()
+    val repeatMode by viewModel.repeatMode.collectAsState()
     val currentPosition by viewModel.currentPosition.collectAsState()
     val duration by viewModel.duration.collectAsState()
 
@@ -70,12 +72,14 @@ fun HomeScreen(viewModel: MusicViewModel) {
                 song = currentSong,
                 isPlaying = isPlaying,
                 isShuffleEnabled = isShuffleEnabled,
+                repeatMode = repeatMode,
                 currentPosition = currentPosition,
                 duration = duration,
                 onPrevious = { viewModel.previousSong() },
                 onPlayPause = { viewModel.togglePlayPause() },
                 onNext = { viewModel.nextSong() },
                 onShuffle = { viewModel.toggleShuffle() },
+                onRepeat = { viewModel.toggleRepeat() },
                 onSeek = { viewModel.seekTo(it) }
             )
         }
@@ -156,12 +160,14 @@ private fun MiniPlayer(
     song: Song,
     isPlaying: Boolean,
     isShuffleEnabled: Boolean,
+    repeatMode: RepeatMode,
     currentPosition: Long,
     duration: Long,
     onPrevious: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onShuffle: () -> Unit,
+    onRepeat: () -> Unit,
     onSeek: (Long) -> Unit
 ) {
     Card(
@@ -251,6 +257,16 @@ private fun MiniPlayer(
                     }
                 ) {
                     Text("🔀")
+                }
+
+                Button(onClick = onRepeat) {
+                    Text(
+                        text = when (repeatMode) {
+                            RepeatMode.OFF -> "🔁"
+                            RepeatMode.ALL -> "🔁"
+                            RepeatMode.ONE -> "🔂"
+                        }
+                    )
                 }
 
                 Text(

@@ -14,6 +14,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import androidx.media3.common.Player
+
+
+enum class RepeatMode {
+    OFF,
+    ALL,
+    ONE
+}
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = MusicRepository(application.applicationContext)
@@ -22,7 +29,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_ENDED) {
-                nextSong()
+                when (_repeatMode.value) {
+                    RepeatMode.ONE -> {
+                        val currentSong = _songs.value.find {
+                            it.id == _currentSongId.value
+                        }
+
+                        if (currentSong != null) {
+                            playSong(currentSong)
+                        }
+                    }
+
+                    RepeatMode.ALL -> {
+                        nextSong()
+                    }
+
+                    RepeatMode.OFF -> {
+                        nextSong()
+                    }
+                }
             }
         }
     }
@@ -51,6 +76,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _isShuffleEnabled = MutableStateFlow(false)
     val isShuffleEnabled: StateFlow<Boolean> = _isShuffleEnabled.asStateFlow()
 
+    private val _repeatMode = MutableStateFlow(RepeatMode.OFF)
+    val repeatMode: StateFlow<RepeatMode> = _repeatMode.asStateFlow()
 
     init {
         startProgressTracking()
@@ -86,6 +113,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _isShuffleEnabled.value = !_isShuffleEnabled.value
     }
 
+    fun toggleRepeat() {
+        _repeatMode.value = when (_repeatMode.value) {
+            RepeatMode.OFF -> RepeatMode.ALL
+            RepeatMode.ALL -> RepeatMode.ONE
+            RepeatMode.ONE -> RepeatMode.OFF
+        }
+    }
+
     fun nextSong() {
         val songs = _songs.value
 
@@ -93,20 +128,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         if (_isShuffleEnabled.value) {
             val currentSong = songs.find { it.id == _currentSongId.value }
-
             val availableSongs = songs.filter { it.id != currentSong?.id }
 
             if (availableSongs.isNotEmpty()) {
                 playSong(availableSongs.random())
             }
-        } else {
-            val currentIndex = songs.indexOfFirst {
-                it.id == _currentSongId.value
-            }
 
-            if (currentIndex != -1 && currentIndex < songs.lastIndex) {
-                playSong(songs[currentIndex + 1])
-            }
+            return
+        }
+
+        val currentIndex = songs.indexOfFirst {
+            it.id == _currentSongId.value
+        }
+
+        if (currentIndex == -1) return
+
+        if (currentIndex < songs.lastIndex) {
+            playSong(songs[currentIndex + 1])
+        } else if (_repeatMode.value == RepeatMode.ALL) {
+            playSong(songs.first())
         }
     }
 
