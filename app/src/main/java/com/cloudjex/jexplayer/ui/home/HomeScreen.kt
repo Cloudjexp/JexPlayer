@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -38,8 +39,10 @@ fun HomeScreen(viewModel: MusicViewModel) {
     val songs by viewModel.songs.collectAsState()
     val currentSongId by viewModel.currentSongId.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
+    val isShuffleEnabled by viewModel.isShuffleEnabled.collectAsState()
     val currentPosition by viewModel.currentPosition.collectAsState()
     val duration by viewModel.duration.collectAsState()
+
 
     val currentSong = songs.find { it.id == currentSongId }
 
@@ -66,12 +69,14 @@ fun HomeScreen(viewModel: MusicViewModel) {
             MiniPlayer(
                 song = currentSong,
                 isPlaying = isPlaying,
+                isShuffleEnabled = isShuffleEnabled,
                 currentPosition = currentPosition,
                 duration = duration,
                 onPrevious = { viewModel.previousSong() },
-                onPlayPause = { viewModel.togglePlayPause()},
-                onNext = { viewModel.nextSong()},
-                onSeek = { viewModel.seekTo(it)}
+                onPlayPause = { viewModel.togglePlayPause() },
+                onNext = { viewModel.nextSong() },
+                onShuffle = { viewModel.toggleShuffle() },
+                onSeek = { viewModel.seekTo(it) }
             )
         }
     }
@@ -150,11 +155,13 @@ private fun SongItem(
 private fun MiniPlayer(
     song: Song,
     isPlaying: Boolean,
+    isShuffleEnabled: Boolean,
     currentPosition: Long,
     duration: Long,
     onPrevious: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
+    onShuffle: () -> Unit,
     onSeek: (Long) -> Unit
 ) {
     Card(
@@ -231,6 +238,19 @@ private fun MiniPlayer(
 
                 Button(onClick = onNext) {
                     Text("⏭")
+                }
+                Button(
+                    onClick = onShuffle,
+                    colors = if (isShuffleEnabled) {
+                        ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        ButtonDefaults.buttonColors()
+                    }
+                ) {
+                    Text("🔀")
                 }
 
                 Text(

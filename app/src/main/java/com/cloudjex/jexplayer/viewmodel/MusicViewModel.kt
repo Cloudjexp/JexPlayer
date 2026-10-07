@@ -48,6 +48,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _duration = MutableStateFlow(0L)
     val duration: StateFlow<Long> = _duration.asStateFlow()
 
+    private val _isShuffleEnabled = MutableStateFlow(false)
+    val isShuffleEnabled: StateFlow<Boolean> = _isShuffleEnabled.asStateFlow()
+
+
     init {
         startProgressTracking()
     }
@@ -78,13 +82,31 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun nextSong() {
-        val currentIndex = _songs.value.indexOfFirst {
-            it.id == _currentSongId.value
-        }
+    fun toggleShuffle() {
+        _isShuffleEnabled.value = !_isShuffleEnabled.value
+    }
 
-        if (currentIndex != -1 && currentIndex < _songs.value.lastIndex) {
-            playSong(_songs.value[currentIndex + 1])
+    fun nextSong() {
+        val songs = _songs.value
+
+        if (songs.isEmpty()) return
+
+        if (_isShuffleEnabled.value) {
+            val currentSong = songs.find { it.id == _currentSongId.value }
+
+            val availableSongs = songs.filter { it.id != currentSong?.id }
+
+            if (availableSongs.isNotEmpty()) {
+                playSong(availableSongs.random())
+            }
+        } else {
+            val currentIndex = songs.indexOfFirst {
+                it.id == _currentSongId.value
+            }
+
+            if (currentIndex != -1 && currentIndex < songs.lastIndex) {
+                playSong(songs[currentIndex + 1])
+            }
         }
     }
 
