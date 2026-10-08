@@ -22,6 +22,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -206,6 +209,17 @@ private fun MiniPlayer(
     onRepeat: () -> Unit,
     onSeek: (Long) -> Unit
 ) {
+    // Posición temporal del Slider mientras el usuario arrastra.
+    var isDragging by remember { mutableStateOf(false) }
+    var draggedPosition by remember { mutableStateOf(0f) }
+
+    val sliderMax = duration.coerceAtLeast(1L).toFloat()
+    val sliderValue = if (isDragging) {
+        draggedPosition.coerceIn(0f, sliderMax)
+    } else {
+        currentPosition.toFloat().coerceIn(0f, sliderMax)
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -253,9 +267,16 @@ private fun MiniPlayer(
             }
 
             Slider(
-                value = currentPosition.toFloat(),
-                onValueChange = { onSeek(it.toLong()) },
-                valueRange = 0f..duration.coerceAtLeast(1L).toFloat()
+                value = sliderValue,
+                onValueChange = { newValue ->
+                    isDragging = true
+                    draggedPosition = newValue
+                },
+                onValueChangeFinished = {
+                    onSeek(draggedPosition.toLong())
+                    isDragging = false
+                },
+                valueRange = 0f..sliderMax
             )
 
             Row(
@@ -264,7 +285,7 @@ private fun MiniPlayer(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = formatDuration(currentPosition),
+                    text = formatDuration(sliderValue.toLong()),
                     style = MaterialTheme.typography.bodySmall
                 )
 
