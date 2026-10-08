@@ -33,25 +33,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_ENDED) {
-                when (_repeatMode.value) {
-                    RepeatMode.ONE -> {
-                        val currentSong = _songs.value.find {
-                            it.id == _currentSongId.value
-                        }
-
-                        if (currentSong != null) {
-                            playSong(currentSong)
-                        }
-                    }
-
-                    RepeatMode.ALL -> {
-                        nextSong()
-                    }
-
-                    RepeatMode.OFF -> {
-                        nextSong()
-                    }
-                }
+                onSongCompleted()
             }
         }
     }
@@ -120,44 +102,82 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             RepeatMode.ALL -> RepeatMode.ONE
             RepeatMode.ONE -> RepeatMode.OFF
         }
+
+        applyRepeatModeToPlayer()
+    }
+
+    private fun applyRepeatModeToPlayer() {
+        player.repeatMode = when (_repeatMode.value) {
+            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+
+            RepeatMode.ALL,
+            RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+        }
     }
 
     fun nextSong() {
+        navigateBy(offset = 1)
+    }
+
+    fun previousSong() {
+        navigateBy(offset = -1)
+    }
+
+    private fun navigateBy(offset: Int) {
         val songs = _songs.value
 
         if (songs.isEmpty()) return
 
         if (_isShuffleEnabled.value) {
-            val currentSong = songs.find { it.id == _currentSongId.value }
-            val availableSongs = songs.filter { it.id != currentSong?.id }
-
-            if (availableSongs.isNotEmpty()) {
-                playSong(availableSongs.random())
-            }
-
+            playRandomOtherThan(_currentSongId.value, songs)
             return
         }
 
-        val currentIndex = songs.indexOfFirst {
-            it.id == _currentSongId.value
-        }
+        val currentIndex = songs.indexOfFirst { it.id == _currentSongId.value }
 
         if (currentIndex == -1) return
 
-        if (currentIndex < songs.lastIndex) {
-            playSong(songs[currentIndex + 1])
-        } else if (_repeatMode.value == RepeatMode.ALL) {
-            playSong(songs.first())
-        }
+        val targetIndex = (currentIndex + offset + songs.size) % songs.size
+        playSong(songs[targetIndex])
     }
 
-    fun previousSong() {
-        val currentIndex = _songs.value.indexOfFirst {
-            it.id == _currentSongId.value
-        }
+    private fun playRandomOtherThan(currentSongId: Long?, songs: List<Song>) {
+        val candidates = songs.filter { it.id != currentSongId }
 
-        if (currentIndex > 0) {
-            playSong(_songs.value[currentIndex - 1])
+        // Con una sola canción no existe otra opción: se reproduce la misma sin errores.
+        val nextSong = candidates.ifEmpty { songs }.random()
+
+        playSong(nextSong)
+    }
+
+    /**
+     * Avance automático al terminar una canción (STATE_ENDED), respetando Repeat.
+     * Repeat ONE lo maneja ExoPlayer de forma nativa (REPEAT_MODE_ONE).
+     */
+    private fun onSongCompleted() {
+        val songs = _songs.value
+
+        if (songs.isEmpty()) return
+
+        when (_repeatMode.value) {
+            RepeatMode.ONE -> Unit
+
+            // ALL: avanza de forma circular (o aleatoria si Shuffle está activo).
+            RepeatMode.ALL -> nextSong()
+
+            // OFF: avanza hasta la última canción y se detiene al alcanzarla.
+            RepeatMode.OFF -> {
+                if (_isShuffleEnabled.value) {
+                    // Con Shuffle no hay un "final" lineal: se mantiene el salto aleatorio.
+                    nextSong()
+                } else {
+                    val currentIndex = songs.indexOfFirst { it.id == _currentSongId.value }
+
+                    if (currentIndex != -1 && currentIndex < songs.lastIndex) {
+                        playSong(songs[currentIndex + 1])
+                    }
+                }
+            }
         }
     }
 
