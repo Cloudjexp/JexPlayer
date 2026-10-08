@@ -27,6 +27,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val playerListener = object : Player.Listener {
 
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            _isPlaying.value = isPlaying
+        }
+
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_ENDED) {
                 when (_repeatMode.value) {
@@ -94,7 +98,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         player.play()
 
         _currentSongId.value = song.id
-        _isPlaying.value = true
         _currentPosition.value = 0L
         _duration.value = song.duration
     }
@@ -102,10 +105,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun togglePlayPause() {
         if (player.isPlaying) {
             player.pause()
-            _isPlaying.value = false
         } else {
             player.play()
-            _isPlaying.value = true
         }
     }
 
@@ -171,7 +172,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 if (player.isPlaying) {
                     _currentPosition.value = player.currentPosition
                     _duration.value = player.duration.coerceAtLeast(0L)
-                    _isPlaying.value = true
                 }
 
                 delay(500)
@@ -187,6 +187,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        player.removeListener(playerListener)
         player.release()
     }
 }
