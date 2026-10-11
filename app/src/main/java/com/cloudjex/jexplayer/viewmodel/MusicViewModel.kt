@@ -4,6 +4,8 @@ import android.app.Application
 import android.media.session.PlaybackState
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import com.cloudjex.jexplayer.data.model.Song
@@ -14,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import androidx.media3.common.Player
+
 
 
 enum class RepeatMode {
@@ -38,9 +41,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private val player: ExoPlayer = ExoPlayer.Builder(application).build().apply {
-        addListener(playerListener)
-    }
+    private val player: ExoPlayer =
+        ExoPlayer.Builder(application)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                    .build(),
+                true
+            )
+            .setHandleAudioBecomingNoisy(true)
+            .build()
+            .apply {
+                addListener(playerListener)
+            }
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs.asStateFlow()
 
