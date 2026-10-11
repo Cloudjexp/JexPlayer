@@ -33,6 +33,10 @@ import coil3.compose.AsyncImage
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 
 
 @Composable
@@ -47,10 +51,33 @@ fun HomeScreen(viewModel: MusicViewModel) {
 
 
     val currentSong = songs.find { it.id == currentSongId }
+    var searchQuery by rememberSaveable {
+        mutableStateOf("")
+    }
+
+    val filteredSongs = songs.filter { song ->
+        song.title.contains(searchQuery, ignoreCase = true) ||
+                song.artist.contains(searchQuery, ignoreCase = true) ||
+                song.album.contains(searchQuery, ignoreCase = true)
+    }
 
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            label = { Text("Buscar canciones") },
+            placeholder = { Text("Título, artista o álbum") },
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 16.dp
+                )
+        )
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
@@ -58,12 +85,21 @@ fun HomeScreen(viewModel: MusicViewModel) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(songs) { song ->
+            items(filteredSongs, key = { it.id }) { song ->
                 SongItem(
                     song = song,
                     isCurrent = song.id == currentSongId,
                     onClick = { viewModel.playSong(song) }
                 )
+            }
+            if (filteredSongs.isEmpty() && searchQuery.isNotBlank()) {
+                item {
+                    Text(
+                        text = "No se encontraron canciones",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
             }
         }
 
