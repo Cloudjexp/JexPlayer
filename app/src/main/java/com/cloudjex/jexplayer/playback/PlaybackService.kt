@@ -31,7 +31,7 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
 
-        mediaSession = MediaSession.Builder(this, player)
+        mediaSession = MediaSession.Builder(this, CircularPlayer(player))
             .setMediaButtonPreferences(
                 listOf(
                     CommandButton.Builder(CommandButton.ICON_SHUFFLE_ON)
