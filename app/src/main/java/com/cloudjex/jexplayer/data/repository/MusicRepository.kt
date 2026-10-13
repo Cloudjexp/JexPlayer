@@ -51,7 +51,7 @@ class MusicRepository(private val context: Context) {
 
                 songs.add(
                     Song(
-                        id = id,
+                        id = id.toString(),
                         title = cursor.getString(titleColumn) ?: "Unknown",
                         artist = cursor.getString(artistColumn) ?: "Unknown",
                         album = cursor.getString(albumColumn) ?: "Unknown",

@@ -2,21 +2,34 @@ package com.cloudjex.jexplayer.viewmodel
 
 import android.app.Application
 import android.content.ComponentName
+import android.content.Intent
+import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.cloudjex.jexplayer.data.local.AlbumArtStore
+import com.cloudjex.jexplayer.data.local.LibraryCache
+import com.cloudjex.jexplayer.data.model.CachedSong
+import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
-import com.cloudjex.jexplayer.data.repository.MusicRepository
+import com.cloudjex.jexplayer.data.model.toSong
+import com.cloudjex.jexplayer.data.repository.FolderRepository
+import com.cloudjex.jexplayer.data.repository.SafMusicScanner
 import com.cloudjex.jexplayer.playback.PlaybackService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 
 
@@ -27,7 +40,15 @@ enum class RepeatMode {
 }
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository = MusicRepository(application.applicationContext)
+    private val appContext = application.applicationContext
+    private val folderRepository = FolderRepository(appContext)
+    private val albumArtStore = AlbumArtStore.from(appContext)
+    private val scanner = SafMusicScanner(appContext, albumArtStore)
+    private val libraryCache = LibraryCache.from(appContext)
+    private var scanJob: Job? = null
+
+    private var cachedEntries: List<CachedSong> = emptyList()
+    private var cacheLoaded = false
 
     private val playerListener = object : Player.Listener {
 
@@ -40,7 +61,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            val songId = mediaItem?.mediaId?.toLongOrNull() ?: return
+            val songId = mediaItem?.mediaId ?: return
             _currentSongId.value = songId
             _currentPosition.value = 0L
             _songs.value.find { it.id == songId }?.let { song ->
@@ -66,11 +87,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs.asStateFlow()
 
-    private val _hasPermission = MutableStateFlow(false)
-    val hasPermission: StateFlow<Boolean> = _hasPermission.asStateFlow()
+    private val _currentSongId = MutableStateFlow<String?>(null)
+    val currentSongId: StateFlow<String?> = _currentSongId.asStateFlow()
 
-    private val _currentSongId = MutableStateFlow<Long?>(null)
-    val currentSongId: StateFlow<Long?> = _currentSongId.asStateFlow()
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
 
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
@@ -86,6 +107,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _repeatMode = MutableStateFlow(RepeatMode.OFF)
     val repeatMode: StateFlow<RepeatMode> = _repeatMode.asStateFlow()
+
+    private val _folders = MutableStateFlow<List<MusicFolder>>(emptyList())
+    val folders: StateFlow<List<MusicFolder>> = _folders.asStateFlow()
+
+    private val _revokedFolderUris = MutableStateFlow<Set<String>>(emptySet())
+    val revokedFolderUris: StateFlow<Set<String>> = _revokedFolderUris.asStateFlow()
+
+    private val _folderMessage = MutableStateFlow<String?>(null)
+    val folderMessage: StateFlow<String?> = _folderMessage.asStateFlow()
 
     init {
         controllerFuture.addListener(
@@ -105,11 +135,165 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         startProgressTracking()
+        reloadLibrary()
     }
 
-    fun onPermissionGranted() {
-        _hasPermission.value = true
-        loadSongs()
+    fun onFolderSelected(uri: Uri?) {
+        if (uri == null) {
+            return
+        }
+
+        try {
+            appContext.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: SecurityException) {
+            _folderMessage.value = "No se pudo conservar el permiso de lectura de la carpeta."
+            refreshFolders()
+            return
+        } catch (_: Exception) {
+            _folderMessage.value = "La carpeta seleccionada no es válida."
+            refreshFolders()
+            return
+        }
+
+        val name = resolveFolderName(uri)
+        val added = folderRepository.addFolder(uri.toString(), name)
+
+        _folderMessage.value = if (added) {
+            "Carpeta añadida: $name"
+        } else {
+            "Esa carpeta ya estaba registrada."
+        }
+
+        reloadLibrary()
+    }
+
+    fun removeFolder(folder: MusicFolder) {
+        runCatching {
+            appContext.contentResolver.releasePersistableUriPermission(
+                Uri.parse(folder.uri),
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+
+        folderRepository.removeFolder(folder.uri)
+        _folderMessage.value = "Carpeta retirada: ${folder.name}"
+        reloadLibrary()
+    }
+
+    fun refreshFolders() {
+        val stored = folderRepository.getFolders()
+        _folders.value = stored
+        _revokedFolderUris.value = stored
+            .filterNot { hasPersistedReadPermission(Uri.parse(it.uri)) }
+            .map { it.uri }
+            .toSet()
+    }
+
+    private fun reloadLibrary() {
+        refreshFolders()
+
+        val folders = activeFolderUris()
+        scanJob?.cancel()
+        scanJob = viewModelScope.launch {
+            if (!cacheLoaded) {
+                cachedEntries = libraryCache.load()
+                cacheLoaded = true
+            }
+
+            _songs.value = visibleCache(folders).map { it.toSong() }
+
+            updateLibrary(folders)
+        }
+    }
+
+    fun refreshLibrary() {
+        reloadLibrary()
+    }
+
+    private suspend fun updateLibrary(folders: List<Uri>) {
+        if (folders.isEmpty()) {
+            _songs.value = emptyList()
+            _isScanning.value = false
+            if (cacheLoaded && cachedEntries.isNotEmpty()) {
+                cachedEntries = emptyList()
+                libraryCache.save(emptyList())
+            }
+            withContext(Dispatchers.IO) { albumArtStore.prune(emptyList()) }
+            return
+        }
+
+        _isScanning.value = true
+
+        val baseline = visibleCache(folders).associateBy { it.id }
+        val outcome = scanner.scan(folders, baseline)
+
+        val merged = buildList {
+            folders.forEach { folder ->
+                val key = folder.toString()
+                if (key in outcome.failedFolders) {
+                    addAll(cachedEntries.filter { belongsToFolder(it.id, key) })
+                } else {
+                    addAll(outcome.scannedByFolder[key].orEmpty())
+                }
+            }
+        }.distinctBy { it.id }
+
+        _songs.value = merged.map { it.toSong() }
+        _isScanning.value = false
+
+        if (merged != cachedEntries) {
+            cachedEntries = merged
+            libraryCache.save(merged)
+        }
+        withContext(Dispatchers.IO) {
+            albumArtStore.prune(merged.map { it.albumArtUri })
+        }
+    }
+
+        private fun visibleCache(folders: List<Uri>): List<CachedSong> =
+        cachedEntries
+            .filter { entry -> folders.any { belongsToFolder(entry.id, it.toString()) } }
+            .distinctBy { it.id }
+
+    private fun belongsToFolder(documentUri: String, folderUri: String): Boolean =
+        documentUri.startsWith("$folderUri/")
+
+    private fun activeFolderUris(): List<Uri> =
+        _folders.value
+            .filterNot { it.uri in _revokedFolderUris.value }
+            .map { Uri.parse(it.uri) }
+
+    private fun hasPersistedReadPermission(uri: Uri): Boolean =
+        appContext.contentResolver.persistedUriPermissions.any { permission ->
+            permission.uri == uri && permission.isReadPermission
+        }
+
+    private fun resolveFolderName(uri: Uri): String {
+        val queriedName = runCatching {
+            val documentId = DocumentsContract.getTreeDocumentId(uri)
+            val documentUri = DocumentsContract.buildDocumentUriUsingTree(uri, documentId)
+            appContext.contentResolver.query(
+                documentUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
+            }
+        }.getOrNull()
+
+        if (!queriedName.isNullOrBlank()) {
+            return queriedName
+        }
+
+        val fallback = uri.lastPathSegment.orEmpty()
+        return fallback.substringAfterLast(':')
+            .substringAfterLast('/')
+            .ifBlank { fallback.ifBlank { uri.toString() } }
     }
 
     fun playSong(song: Song) {
@@ -123,17 +307,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
             if (startIndex >= 0) {
                 controller.setMediaItems(
-                    songs.map { item ->
-                        MediaItem.Builder()
-                            .setUri(item.uri)
-                            .setMediaId(item.id.toString())
-                            .build()
-                    },
+                    songs.map { item -> item.toMediaItem() },
                     startIndex,
                     0L
                 )
             } else {
-                controller.setMediaItem(MediaItem.fromUri(song.uri))
+                controller.setMediaItem(song.toMediaItem())
             }
 
             controller.shuffleModeEnabled = _isShuffleEnabled.value
@@ -142,10 +321,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Ejecuta [action] sobre el controller si ya está conectado. Si todavía no lo
-     * está, guarda solo la solicitud más reciente para ejecutarla al conectar.
-     */
     private fun runOnController(action: (MediaController) -> Unit) {
         val connected = controller
 
@@ -223,10 +398,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         playSong(songs[targetIndex])
     }
 
-    private fun playRandomOtherThan(currentSongId: Long?, songs: List<Song>) {
+    private fun playRandomOtherThan(currentSongId: String?, songs: List<Song>) {
         val candidates = songs.filter { it.id != currentSongId }
 
-        // Con una sola canción no existe otra opción: se reproduce la misma sin errores.
         val nextSong = candidates.ifEmpty { songs }.random()
 
         playSong(nextSong)
@@ -285,17 +459,27 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun loadSongs() {
-        viewModelScope.launch {
-            _songs.value = repository.getSongs()
-        }
-    }
-
     override fun onCleared() {
         super.onCleared()
+        scanJob?.cancel()
         controller?.removeListener(playerListener)
         controller = null
         pendingAction = null
         MediaController.releaseFuture(controllerFuture)
     }
+}
+private fun Song.toMediaItem(): MediaItem {
+    val artwork = albumArtUri
+    val metadata = MediaMetadata.Builder()
+        .setTitle(title)
+        .setArtist(artist)
+        .setAlbumTitle(album)
+        .apply { if (artwork != null) setArtworkUri(artwork) }
+        .build()
+
+    return MediaItem.Builder()
+        .setUri(uri)
+        .setMediaId(id)
+        .setMediaMetadata(metadata)
+        .build()
 }
