@@ -14,3 +14,5 @@ local.properties
 
 captures/
 .DS_Store
+
+/design/
