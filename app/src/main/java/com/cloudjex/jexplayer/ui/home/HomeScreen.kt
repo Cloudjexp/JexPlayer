@@ -19,6 +19,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -31,8 +32,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
@@ -43,9 +46,16 @@ import androidx.compose.runtime.setValue
 
 
 @Composable
-fun HomeScreen(viewModel: MusicViewModel) {
+fun HomeScreen(
+    viewModel: MusicViewModel,
+    onAddFolder: () -> Unit
+) {
     val songs by viewModel.songs.collectAsState()
+    val folders by viewModel.folders.collectAsState()
+    val revokedFolderUris by viewModel.revokedFolderUris.collectAsState()
+    val folderMessage by viewModel.folderMessage.collectAsState()
     val currentSongId by viewModel.currentSongId.collectAsState()
+    val isScanning by viewModel.isScanning.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val isShuffleEnabled by viewModel.isShuffleEnabled.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
@@ -81,6 +91,17 @@ fun HomeScreen(viewModel: MusicViewModel) {
                     top = 16.dp
                 )
         )
+        LibraryToolbar(
+            isScanning = isScanning,
+            onRefresh = { viewModel.refreshLibrary() }
+        )
+        FoldersSection(
+            folders = folders,
+            revokedFolderUris = revokedFolderUris,
+            message = folderMessage,
+            onAddFolder = onAddFolder,
+            onRemoveFolder = { viewModel.removeFolder(it) }
+        )
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
@@ -95,10 +116,14 @@ fun HomeScreen(viewModel: MusicViewModel) {
                     onClick = { viewModel.playSong(song) }
                 )
             }
-            if (filteredSongs.isEmpty() && searchQuery.isNotBlank()) {
+            if (filteredSongs.isEmpty()) {
                 item {
                     Text(
-                        text = "No se encontraron canciones",
+                        text = when {
+                            searchQuery.isNotBlank() -> "No se encontraron canciones"
+                            isScanning -> "Escaneando carpetas…"
+                            else -> "No se encontraron archivos de audio en las carpetas seleccionadas."
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(16.dp)
                     )
@@ -126,6 +151,135 @@ fun HomeScreen(viewModel: MusicViewModel) {
 }
 
 @Composable
+private fun LibraryToolbar(
+    isScanning: Boolean,
+    onRefresh: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        TextButton(
+            onClick = onRefresh,
+            enabled = !isScanning
+        ) {
+            Text("Actualizar biblioteca")
+        }
+
+        if (isScanning) {
+            Text(
+                text = "Actualizando…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun FoldersSection(
+    folders: List<MusicFolder>,
+    revokedFolderUris: Set<String>,
+    message: String?,
+    onAddFolder: () -> Unit,
+    onRemoveFolder: (MusicFolder) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Carpetas de música",
+                style = MaterialTheme.typography.titleSmall
+            )
+            Button(onClick = onAddFolder) {
+                Text("Añadir carpeta")
+            }
+        }
+
+        if (folders.isEmpty()) {
+            Text(
+                text = "No hay carpetas registradas.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            folders.forEach { folder ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = folder.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = folder.uri,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (folder.uri in revokedFolderUris) {
+                            Text(
+                                text = "Permiso revocado: vuelve a seleccionarla",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                    TextButton(onClick = { onRemoveFolder(folder) }) {
+                        Text("Quitar")
+                    }
+                }
+            }
+        }
+
+        message?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+private fun SongArtwork(
+    song: Song,
+    size: Dp,
+    cornerRadius: Dp
+) {
+    val placeholderPainter = ColorPainter(MaterialTheme.colorScheme.surfaceVariant)
+
+    AsyncImage(
+        model = song.albumArtUri,
+        contentDescription = song.album,
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(cornerRadius)),
+        contentScale = ContentScale.Crop,
+        placeholder = placeholderPainter,
+        error = placeholderPainter,
+        fallback = placeholderPainter
+    )
+}
+
+@Composable
 private fun SongItem(
     song: Song,
     isCurrent: Boolean,
@@ -150,6 +304,14 @@ private fun SongItem(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            SongArtwork(
+                song = song,
+                size = 48.dp,
+                cornerRadius = 6.dp
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = song.title,
@@ -232,18 +394,10 @@ private fun MiniPlayer(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val placeholderPainter = ColorPainter(MaterialTheme.colorScheme.surfaceVariant)
-
-                AsyncImage(
-                    model = song.albumArtUri,
-                    contentDescription = song.album,
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                    contentScale = ContentScale.Crop,
-                    placeholder = placeholderPainter,
-                    error = placeholderPainter,
-                    fallback = placeholderPainter
+                SongArtwork(
+                    song = song,
+                    size = 64.dp,
+                    cornerRadius = 8.dp
                 )
 
                 Spacer(modifier = Modifier.width(12.dp))
