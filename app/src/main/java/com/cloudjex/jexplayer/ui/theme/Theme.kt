@@ -1,54 +1,87 @@
 package com.cloudjex.jexplayer.ui.theme
 
-import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+private val JexDarkColorScheme = darkColorScheme(
+    primary = JexPrimary,
+    onPrimary = JexOnPrimary,
+    primaryContainer = JexPrimaryContainer,
+    onPrimaryContainer = JexTextPrimary,
+    inversePrimary = JexVioletDark,
+
+    secondary = JexViolet,
+    onSecondary = JexOnViolet,
+    secondaryContainer = JexVioletContainer,
+    onSecondaryContainer = JexTextPrimary,
+
+    tertiary = JexVioletDark,
+    onTertiary = JexTextPrimary,
+    tertiaryContainer = JexVioletContainer,
+    onTertiaryContainer = JexViolet,
+
+    background = JexBackground,
+    onBackground = JexTextPrimary,
+
+    surface = JexSurface,
+    onSurface = JexTextPrimary,
+    surfaceVariant = JexSurfaceVariant,
+    onSurfaceVariant = JexTextSecondary,
+    surfaceTint = JexPrimary,
+
+    inverseSurface = JexTextPrimary,
+    inverseOnSurface = JexBackground,
+
+    outline = JexOutline,
+    outlineVariant = JexOutlineVariant,
+    scrim = Color.Black,
+
+    surfaceBright = JexSurfaceBright,
+    surfaceDim = JexBackground,
+    surfaceContainerLowest = Color(0xFF0C0B12),
+    surfaceContainerLow = Color(0xFF191621),
+    surfaceContainer = JexSurface,
+    surfaceContainerHigh = JexSurfaceElevated,
+    surfaceContainerHighest = JexSurfaceBright
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
+private val JexLightColorScheme = lightColorScheme(
+    primary = JexVioletDark,
     onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    primaryContainer = JexLightPrimaryContainer,
+    onPrimaryContainer = JexLightOnSurface,
+
+    secondary = JexPrimary,
+    onSecondary = JexOnPrimary,
+    secondaryContainer = JexLightSurfaceVariant,
+    onSecondaryContainer = JexLightOnSurface,
+
+    tertiary = JexViolet,
+    onTertiary = JexOnViolet,
+
+    background = JexLightBackground,
+    onBackground = JexLightOnSurface,
+
+    surface = JexLightSurface,
+    onSurface = JexLightOnSurface,
+    surfaceVariant = JexLightSurfaceVariant,
+    onSurfaceVariant = JexLightTextSecondary,
+
+    outline = JexLightOutline,
+    outlineVariant = JexLightSurfaceVariant
 )
 
 @Composable
 fun JexPlayerTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    @Suppress("UNUSED_PARAMETER") dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
+    val colorScheme = if (darkTheme) JexDarkColorScheme else JexLightColorScheme
 
     MaterialTheme(
         colorScheme = colorScheme,
