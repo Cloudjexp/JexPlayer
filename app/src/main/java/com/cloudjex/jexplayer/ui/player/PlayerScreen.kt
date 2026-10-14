@@ -201,6 +201,8 @@ private fun PlayerContent(
             )
         }
 
+        AudioVisualizer(isPlaying = isPlaying)
+
         PlayerProgress(
             currentPosition = currentPosition,
             duration = duration,
@@ -219,8 +221,6 @@ private fun PlayerContent(
         )
 
         LyricsButton()
-
-        AudioVisualizer(isPlaying = isPlaying)
     }
 }
 
@@ -410,62 +410,58 @@ private fun AudioVisualizer(
     modifier: Modifier = Modifier
 ) {
     val transition = rememberInfiniteTransition(label = "visualizer")
-    val phase by transition.animateFloat(
+    val progress by transition.animateFloat(
         initialValue = 0f,
-        targetValue = (2 * PI).toFloat(),
+        targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1600, easing = LinearEasing)
+            animation = tween(durationMillis = 2600, easing = LinearEasing)
         ),
-        label = "phase"
+        label = "progress"
     )
 
     val amplitude by animateFloatAsState(
-        targetValue = if (isPlaying) 1f else 0.12f,
-        animationSpec = tween(durationMillis = 600),
+        targetValue = if (isPlaying) 1f else 0.16f,
+        animationSpec = tween(durationMillis = 700),
         label = "amplitude"
     )
 
-    Surface(
+    Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(110.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface
+            .height(32.dp)
     ) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 14.dp, vertical = 16.dp)
-        ) {
-            val count = (size.width / 6.dp.toPx()).toInt().coerceIn(8, 64)
-            val slot = size.width / count
-            val barWidth = slot * 0.6f
-            val radius = barWidth / 2f
-            val minFraction = 0.08f
+        val slot = 9.dp.toPx()
+        val count = (size.width / slot).toInt().coerceIn(12, 42)
+        val step = size.width / count
+        val barWidth = (step * 0.42f).coerceAtLeast(1.5.dp.toPx())
+        val radius = barWidth / 2f
+        val minFraction = 0.12f
+        val maxFraction = 0.88f
+        val fullTurn = (2 * PI).toFloat()
 
-            val brush = Brush.verticalGradient(
-                listOf(JexPrimary, JexViolet, JexVioletDark)
+        val brush = Brush.horizontalGradient(
+            colors = listOf(JexVioletDark, JexViolet, JexPrimary)
+        )
+
+        for (index in 0 until count) {
+            val n = index.toFloat()
+
+            val wave = sin(fullTurn * progress + n * 0.55f) * 0.5f +
+                sin(fullTurn * 2f * progress + n * 1.15f + 0.8f) * 0.3f +
+                sin(fullTurn * 3f * progress + n * 0.35f + 2.1f) * 0.2f
+            val dynamic = ((wave + 1f) * 0.5f).coerceIn(0f, 1f)
+
+            val fraction = minFraction + dynamic * amplitude * (maxFraction - minFraction)
+            val barHeight = fraction * size.height
+            val left = index * step + (step - barWidth) / 2f
+            val top = size.height - barHeight
+
+            drawRoundRect(
+                brush = brush,
+                topLeft = Offset(left, top),
+                size = Size(barWidth, barHeight),
+                cornerRadius = CornerRadius(radius, radius)
             )
-
-            for (index in 0 until count) {
-                val n = index.toFloat()
-                val wave = sin(phase + n * 0.6f) * 0.5f +
-                    sin(phase * 2f + n * 1.4f + 1.3f) * 0.3f +
-                    sin(phase * 3f + n * 2.3f) * 0.2f
-                val dynamic = ((wave + 1f) * 0.5f).coerceIn(0f, 1f)
-
-                val fraction = minFraction + dynamic * amplitude * (1f - minFraction)
-                val barHeight = fraction * size.height
-                val left = index * slot + (slot - barWidth) / 2f
-                val top = size.height - barHeight
-
-                drawRoundRect(
-                    brush = brush,
-                    topLeft = Offset(left, top),
-                    size = Size(barWidth, barHeight),
-                    cornerRadius = CornerRadius(radius, radius)
-                )
-            }
         }
     }
 }
