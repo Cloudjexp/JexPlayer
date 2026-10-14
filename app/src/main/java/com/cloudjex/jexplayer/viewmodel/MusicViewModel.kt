@@ -8,6 +8,7 @@ import android.provider.DocumentsContract
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -126,6 +127,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 controller = connected
                 connected.addListener(playerListener)
 
+                // Al conectar con una sesión ya activa (p. ej. el servicio sigue
+                // reproduciendo tras cerrar la Activity), los Player.Listener no
+                // reciben el estado actual. Lo leemos una vez de forma explícita.
+                syncStateFromController(connected)
+
                 pendingAction?.let { action ->
                     action(connected)
                     pendingAction = null
@@ -136,6 +142,34 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         startProgressTracking()
         reloadLibrary()
+    }
+
+    /**
+     * Vuelca el estado actual del reproductor en los StateFlow del ViewModel.
+     * Necesario al conectar con una MediaSession ya activa: el MediaController no
+     * reemite el estado existente a los listeners añadidos tras la conexión.
+     * No crea una nueva instancia ni reinicia la reproducción.
+     */
+    private fun syncStateFromController(controller: MediaController) {
+        controller.currentMediaItem?.mediaId?.let { songId ->
+            _currentSongId.value = songId
+            _songs.value.find { it.id == songId }?.let { song ->
+                _duration.value = song.duration
+            }
+        }
+
+        val controllerDuration = controller.duration
+        if (controllerDuration != C.TIME_UNSET && controllerDuration > 0L) {
+            _duration.value = controllerDuration
+        }
+
+        _currentPosition.value = controller.currentPosition.coerceAtLeast(0L)
+        _isPlaying.value = controller.isPlaying
+        _isShuffleEnabled.value = controller.shuffleModeEnabled
+        _repeatMode.value = when (controller.repeatMode) {
+            Player.REPEAT_MODE_ONE -> RepeatMode.ONE
+            else -> RepeatMode.OFF
+        }
     }
 
     fun onFolderSelected(uri: Uri?) {
