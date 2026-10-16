@@ -16,6 +16,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
 import com.cloudjex.jexplayer.data.local.LibraryCache
+import com.cloudjex.jexplayer.data.local.ScreenPreferenceStore
 import com.cloudjex.jexplayer.data.model.AudioTags
 import com.cloudjex.jexplayer.data.model.CachedSong
 import com.cloudjex.jexplayer.data.model.MusicFolder
@@ -31,6 +32,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -48,7 +50,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val albumArtStore = AlbumArtStore.from(appContext)
     private val scanner = SafMusicScanner(appContext, albumArtStore)
     private val libraryCache = LibraryCache.from(appContext)
+    private val screenPreferences = ScreenPreferenceStore.from(appContext)
     private var scanJob: Job? = null
+    private var userChangedScreen = false
     private var audioTagsJob: Job? = null
 
     private var cachedEntries: List<CachedSong> = emptyList()
@@ -128,6 +132,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _audioTags = MutableStateFlow<AudioTags?>(null)
     val audioTags: StateFlow<AudioTags?> = _audioTags.asStateFlow()
 
+    /**
+     * `true` = reproductor, `false` = biblioteca, `null` = preferencia aún sin
+     * resolver. La UI no dibuja ninguna de las dos pantallas hasta que deja de
+     * ser `null`, así el destino restaurado aparece desde el primer render.
+     */
+    private val _showPlayer = MutableStateFlow<Boolean?>(null)
+    val showPlayer: StateFlow<Boolean?> = _showPlayer.asStateFlow()
+
     /** Caché en memoria por canción para no releer el archivo en cada visita. */
     private val audioTagsCache = mutableMapOf<String, AudioTags?>()
 
@@ -155,6 +167,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         startProgressTracking()
         reloadLibrary()
+
+        // Se resuelve la preferencia antes de que la UI dibuje Home o Player;
+        // hasta entonces `showPlayer` es `null` y no se muestra ninguna pantalla.
+        viewModelScope.launch {
+            val saved = screenPreferences.lastScreen.first()
+            if (!userChangedScreen) {
+                _showPlayer.value = saved
+            }
+        }
     }
 
     /**
@@ -258,6 +279,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshLibrary() {
         reloadLibrary()
+    }
+
+    /**
+     * Cambia de pantalla y la persiste. Solo escribe cuando el valor cambia de
+     * verdad, así las recomposiciones de Compose no generan escrituras.
+     */
+    fun setShowPlayer(showPlayer: Boolean) {
+        userChangedScreen = true
+        if (_showPlayer.value == showPlayer) return
+
+        _showPlayer.value = showPlayer
+        viewModelScope.launch { screenPreferences.save(showPlayer) }
     }
 
     private suspend fun updateLibrary(folders: List<Uri>) {
