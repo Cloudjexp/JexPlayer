@@ -1,5 +1,6 @@
 package com.cloudjex.jexplayer.ui.player
 
+import android.R.attr.onClick
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -9,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,9 +53,11 @@ import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -65,6 +69,16 @@ import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import kotlin.math.PI
 import kotlin.math.sin
+import com.cloudjex.jexplayer.ui.icons.JexArrowBackIcon
+import com.cloudjex.jexplayer.ui.icons.JexMusicIcon
+import com.cloudjex.jexplayer.ui.icons.JexRepeatIcon
+import com.cloudjex.jexplayer.ui.icons.JexShuffleIcon
+import com.cloudjex.jexplayer.ui.icons.JexMoreIcon
+import com.cloudjex.jexplayer.ui.icons.JexPlayIcon
+import com.cloudjex.jexplayer.ui.icons.JexRepeatOneIcon
+import com.cloudjex.jexplayer.ui.icons.JexSkipNextIcon
+import com.cloudjex.jexplayer.ui.icons.JexSkipPreviousIcon
+import com.cloudjex.jexplayer.ui.icons.JexPauseIcon
 
 @Composable
 fun PlayerScreen(
@@ -78,40 +92,55 @@ fun PlayerScreen(
     val repeatMode by viewModel.repeatMode.collectAsState()
     val currentPosition by viewModel.currentPosition.collectAsState()
     val duration by viewModel.duration.collectAsState()
+    val audioTags by viewModel.audioTags.collectAsState()
 
     val currentSong = songs.find { it.id == currentSongId }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-    ) {
-        PlayerTopBar(onBack = onBack)
+    // Estado para controlar si se muestra la pantalla de letra
+    var showLyrics by remember { mutableStateOf(false) }
 
-        if (currentSong == null) {
-            PlayerEmptyState(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            )
-        } else {
-            PlayerContent(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        ) {
+            PlayerTopBar(onBack = onBack)
+
+            if (currentSong == null) {
+                PlayerEmptyState(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                )
+            } else {
+                PlayerContent(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    song = currentSong,
+                    isPlaying = isPlaying,
+                    isShuffleEnabled = isShuffleEnabled,
+                    repeatMode = repeatMode,
+                    currentPosition = currentPosition,
+                    duration = duration,
+                    onPrevious = { viewModel.previousSong() },
+                    onPlayPause = { viewModel.togglePlayPause() },
+                    onNext = { viewModel.nextSong() },
+                    onShuffle = { viewModel.toggleShuffle() },
+                    onRepeat = { viewModel.toggleRepeat() },
+                    onSeek = { viewModel.seekTo(it) },
+                    onArtworkClick = { showLyrics = true } // <-- Activamos la apertura aquí
+                )
+            }
+        }
+
+        // Si showLyrics es true, se dibuja encima cubriendo toda la pantalla
+        if (showLyrics && currentSong != null) {
+            LyricsScreen(
                 song = currentSong,
-                isPlaying = isPlaying,
-                isShuffleEnabled = isShuffleEnabled,
-                repeatMode = repeatMode,
-                currentPosition = currentPosition,
-                duration = duration,
-                onPrevious = { viewModel.previousSong() },
-                onPlayPause = { viewModel.togglePlayPause() },
-                onNext = { viewModel.nextSong() },
-                onShuffle = { viewModel.toggleShuffle() },
-                onRepeat = { viewModel.toggleRepeat() },
-                onSeek = { viewModel.seekTo(it) }
-            )
+                tags = audioTags,
+                onClose = { showLyrics = false })
         }
     }
 }
@@ -167,7 +196,8 @@ private fun PlayerContent(
     onNext: () -> Unit,
     onShuffle: () -> Unit,
     onRepeat: () -> Unit,
-    onSeek: (Long) -> Unit
+    onSeek: (Long) -> Unit,
+    onArtworkClick: () -> Unit // <-- Añadido parámetro de evento click
 ) {
     Column(
         modifier = modifier
@@ -175,7 +205,7 @@ private fun PlayerContent(
             .padding(horizontal = 24.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        PlayerArtwork(song = song)
+        PlayerArtwork(song = song, onClick = onArtworkClick) // <-- Pasamos la función aquí
 
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -219,27 +249,45 @@ private fun PlayerContent(
             onShuffle = onShuffle,
             onRepeat = onRepeat
         )
-
-        LyricsButton()
     }
 }
 
 @Composable
-private fun PlayerArtwork(song: Song) {
+private fun PlayerArtwork(song: Song, onClick: () -> Unit) {
     val placeholderPainter = ColorPainter(MaterialTheme.colorScheme.secondaryContainer)
-
-    AsyncImage(
-        model = song.albumArtUri,
-        contentDescription = song.album,
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(20.dp)),
-        contentScale = ContentScale.Crop,
-        placeholder = placeholderPainter,
-        error = placeholderPainter,
-        fallback = placeholderPainter
-    )
+            .clip(RoundedCornerShape(20.dp))
+            .clickable { onClick() }
+    ) {
+        AsyncImage(
+            model = song.albumArtUri,
+            contentDescription = song.album,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(20.dp)),
+            contentScale = ContentScale.Crop,
+            placeholder = placeholderPainter,
+            error = placeholderPainter,
+            fallback = placeholderPainter
+        )
+        Text(
+            text = "Letra",
+            color = Color.White,
+            fontSize = 12.sp,
+            fontStyle = FontStyle.Italic,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .align (Alignment.BottomEnd)
+                .padding(4.dp)
+                .border( width = 1.dp, color = Color.White, shape = RoundedCornerShape(20.dp))
+                .background(color = Color.Black.copy(alpha = 0.5f), shape = RoundedCornerShape(20.dp))
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+        )
+    }
 }
 
 @Composable
@@ -380,31 +428,6 @@ private fun PlayerControls(
 }
 
 @Composable
-private fun LyricsButton() {
-    Box(
-        modifier = Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center
-    ) {
-        Surface(
-            shape = RoundedCornerShape(50),
-            color = Color.Transparent,
-            border = BorderStroke(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
-            )
-        ) {
-            Text(
-                text = "Ver letras",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.padding(horizontal = 32.dp, vertical = 12.dp)
-            )
-        }
-    }
-}
-
-@Composable
 private fun AudioVisualizer(
     isPlaying: Boolean,
     modifier: Modifier = Modifier
@@ -447,8 +470,8 @@ private fun AudioVisualizer(
             val n = index.toFloat()
 
             val wave = sin(fullTurn * progress + n * 0.55f) * 0.5f +
-                sin(fullTurn * 2f * progress + n * 1.15f + 0.8f) * 0.3f +
-                sin(fullTurn * 3f * progress + n * 0.35f + 2.1f) * 0.2f
+                    sin(fullTurn * 2f * progress + n * 1.15f + 0.8f) * 0.3f +
+                    sin(fullTurn * 3f * progress + n * 0.35f + 2.1f) * 0.2f
             val dynamic = ((wave + 1f) * 0.5f).coerceIn(0f, 1f)
 
             val fraction = minFraction + dynamic * amplitude * (maxFraction - minFraction)
@@ -498,68 +521,68 @@ private fun formatDuration(durationMs: Long): String {
     return "%d:%02d".format(minutes, seconds)
 }
 
-private fun jexVector(name: String, pathData: String): ImageVector =
-    ImageVector.Builder(
-        name = name,
-        defaultWidth = 24.dp,
-        defaultHeight = 24.dp,
-        viewportWidth = 24f,
-        viewportHeight = 24f
-    ).addPath(
-        pathData = PathParser().parsePathString(pathData).toNodes(),
-        fill = SolidColor(Color.Black)
-    ).build()
-
-private val JexArrowBackIcon = jexVector(
-    "JexArrowBack",
-    "M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"
-)
-
-private val JexMoreIcon = jexVector(
-    "JexMore",
-    "M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 " +
-        "2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"
-)
-
-private val JexPlayIcon = jexVector(
-    "JexPlay",
-    "M8 5v14l11-7z"
-)
-
-private val JexPauseIcon = jexVector(
-    "JexPause",
-    "M6 19h4V5H6v14zm8-14v14h4V5h-4z"
-)
-
-private val JexSkipPreviousIcon = jexVector(
-    "JexSkipPrevious",
-    "M6 6h2v12H6zm3.5 6l8.5 6V6z"
-)
-
-private val JexSkipNextIcon = jexVector(
-    "JexSkipNext",
-    "M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"
-)
-
-private val JexShuffleIcon = jexVector(
-    "JexShuffle",
-    "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 " +
-        "5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 " +
-        "2.04-3.13-3.13z"
-)
-
-private val JexRepeatIcon = jexVector(
-    "JexRepeat",
-    "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"
-)
-
-private val JexRepeatOneIcon = jexVector(
-    "JexRepeatOne",
-    "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"
-)
-
-private val JexMusicIcon = jexVector(
-    "JexMusic",
-    "M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 " +
-        "4-4V7h4V3h-6z"
-)
+//private fun jexVector(name: String, pathData: String): ImageVector =
+//    ImageVector.Builder(
+//        name = name,
+//        defaultWidth = 24.dp,
+//        defaultHeight = 24.dp,
+//        viewportWidth = 24f,
+//        viewportHeight = 24f
+//    ).addPath(
+//        pathData = PathParser().parsePathString(pathData).toNodes(),
+//        fill = SolidColor(Color.Black)
+//    ).build()
+//
+//private val JexArrowBackIcon = jexVector(
+//    "JexArrowBack",
+//    "M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"
+//)
+//
+//private val JexMoreIcon = jexVector(
+//    "JexMore",
+//    "M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 " +
+//            "2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"
+//)
+//
+//private val JexPlayIcon = jexVector(
+//    "JexPlay",
+//    "M8 5v14l11-7z"
+//)
+//
+//private val JexPauseIcon = jexVector(
+//    "JexPause",
+//    "M6 19h4V5H6v14zm8-14v14h4V5h-4z"
+//)
+//
+//private val JexSkipPreviousIcon = jexVector(
+//    "JexSkipPrevious",
+//    "M6 6h2v12H6zm3.5 6l8.5 6V6z"
+//)
+//
+//private val JexSkipNextIcon = jexVector(
+//    "JexSkipNext",
+//    "M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"
+//)
+//
+//private val JexShuffleIcon = jexVector(
+//    "JexShuffle",
+//    "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 " +
+//            "5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 " +
+//            "2.04-3.13-3.13z"
+//)
+//
+//private val JexRepeatIcon = jexVector(
+//    "JexRepeat",
+//    "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"
+//)
+//
+//private val JexRepeatOneIcon = jexVector(
+//    "JexRepeatOne",
+//    "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"
+//)
+//
+//private val JexMusicIcon = jexVector(
+//    "JexMusic",
+//    "M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 " +
+//            "4-4V7h4V3h-6z"
+//)

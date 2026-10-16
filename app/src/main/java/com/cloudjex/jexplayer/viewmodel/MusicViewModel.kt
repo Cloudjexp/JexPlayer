@@ -15,6 +15,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
 import com.cloudjex.jexplayer.data.local.LibraryCache
+import com.cloudjex.jexplayer.data.model.AudioTags
 import com.cloudjex.jexplayer.data.model.CachedSong
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
@@ -22,6 +23,7 @@ import com.cloudjex.jexplayer.data.model.toSong
 import com.cloudjex.jexplayer.data.repository.FolderRepository
 import com.cloudjex.jexplayer.data.repository.SafMusicScanner
 import com.cloudjex.jexplayer.playback.PlaybackService
+import com.cloudjex.jexplayer.ui.player.FlacInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -46,6 +48,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val scanner = SafMusicScanner(appContext, albumArtStore)
     private val libraryCache = LibraryCache.from(appContext)
     private var scanJob: Job? = null
+    private var audioTagsJob: Job? = null
 
     private var cachedEntries: List<CachedSong> = emptyList()
     private var cacheLoaded = false
@@ -64,8 +67,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val songId = mediaItem?.mediaId ?: return
             _currentSongId.value = songId
             _currentPosition.value = 0L
+            _audioTags.value = audioTagsCache[songId]
             _songs.value.find { it.id == songId }?.let { song ->
                 _duration.value = song.duration
+                // Los tags se cargan solos en cada cambio de canción, así están
+                // disponibles en cualquier pantalla sin que la UI lo pida.
+                cargarAudioTags(song)
             }
         }
 
@@ -116,6 +123,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _folderMessage = MutableStateFlow<String?>(null)
     val folderMessage: StateFlow<String?> = _folderMessage.asStateFlow()
+
+    private val _audioTags = MutableStateFlow<AudioTags?>(null)
+    val audioTags: StateFlow<AudioTags?> = _audioTags.asStateFlow()
+
+    /** Caché en memoria por canción para no releer el archivo en cada visita. */
+    private val audioTagsCache = mutableMapOf<String, AudioTags?>()
 
     init {
         controllerFuture.addListener(
@@ -294,6 +307,29 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return fallback.substringAfterLast(':')
             .substringAfterLast('/')
             .ifBlank { fallback.ifBlank { uri.toString() } }
+    }
+
+    /**
+     * Carga las letras y los metadatos técnicos de [song] desde jAudioTagger.
+     * El resultado queda en [audioTags] y se reutiliza mientras la app viva.
+     */
+    fun cargarAudioTags(song: Song) {
+        // `containsKey` y no `?.let`: una canción sin letras también queda
+        // cacheada (con `null`) y no debe releerse del disco en cada visita.
+        if (audioTagsCache.containsKey(song.id)) {
+            _audioTags.value = audioTagsCache[song.id]
+            return
+        }
+
+        audioTagsJob?.cancel()
+        audioTagsJob = viewModelScope.launch {
+            _audioTags.value = null
+            val tags = withContext(Dispatchers.IO) {
+                FlacInfo.leerTags(appContext, song.uri)
+            }
+            audioTagsCache[song.id] = tags
+            _audioTags.value = tags
+        }
     }
 
     fun playSong(song: Song) {
