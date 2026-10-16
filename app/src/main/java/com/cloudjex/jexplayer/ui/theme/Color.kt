@@ -2,7 +2,8 @@ package com.cloudjex.jexplayer.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val JexBackground = Color(0xFF111018)
+//val JexBackground = Color(0xFF111018)
+val JexBackground = Color(0xFF000000)
 
 val JexSurface = Color(0xFF211D2B)
 

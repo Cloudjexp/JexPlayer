@@ -376,19 +376,35 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val startIndex = songs.indexOfFirst { it.id == song.id }
 
             if (startIndex >= 0) {
-                controller.setMediaItems(
-                    songs.map { item -> item.toMediaItem() },
-                    startIndex,
-                    0L
-                )
+                if (controllerHasQueue(controller, songs)) {
+                    controller.seekTo(startIndex, 0L)
+                } else {
+                    controller.setMediaItems(
+                        songs.map { item -> item.toMediaItem() },
+                        startIndex,
+                        0L
+                    )
+                    controller.shuffleModeEnabled = _isShuffleEnabled.value
+                    controller.prepare()
+                }
             } else {
                 controller.setMediaItem(song.toMediaItem())
+                controller.shuffleModeEnabled = _isShuffleEnabled.value
+                controller.prepare()
             }
 
-            controller.shuffleModeEnabled = _isShuffleEnabled.value
-            controller.prepare()
             controller.play()
         }
+    }
+
+    private fun controllerHasQueue(controller: MediaController, songs: List<Song>): Boolean {
+        if (controller.mediaItemCount != songs.size) return false
+
+        for (index in songs.indices) {
+            if (controller.getMediaItemAt(index).mediaId != songs[index].id) return false
+        }
+
+        return true
     }
 
     private fun runOnController(action: (MediaController) -> Unit) {
