@@ -14,15 +14,17 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -53,22 +55,27 @@ class MainActivity : ComponentActivity() {
                 val vm: MusicViewModel = viewModel()
                 viewModel = vm
                 val folders by vm.folders.collectAsState()
+                val restoredScreen by vm.showPlayer.collectAsState()
 
-                var showPlayer by rememberSaveable { mutableStateOf(false) }
-
-                BackHandler(enabled = showPlayer) {
-                    showPlayer = false
+                BackHandler(enabled = restoredScreen == true) {
+                    vm.setShowPlayer(false)
                 }
 
                 val transitionOffsetPx = with(LocalDensity.current) { 20.dp.roundToPx() }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     Box(modifier = Modifier.padding(innerPadding)) {
-                        if (folders.isEmpty()) {
-                            WelcomeScreen(onSelectFolders = { openFolderPicker() })
-                        } else {
-                            AnimatedContent(
-                                targetState = showPlayer,
+                        val screen = restoredScreen
+                        when {
+                            folders.isEmpty() -> {
+                                WelcomeScreen(onSelectFolders = { openFolderPicker() })
+                            }
+                            // Preferencia aún sin resolver: pantalla neutra, nunca
+                            // la biblioteca, para no parpadear antes del reproductor.
+                            screen == null -> ScreenLoading()
+
+                            else -> AnimatedContent(
+                                targetState = screen,
                                 transitionSpec = {
                                     if (targetState) {
                                         (fadeIn(tween(600, easing = FastOutSlowInEasing)) +
@@ -94,13 +101,13 @@ class MainActivity : ComponentActivity() {
                                 if (playerOpen) {
                                     PlayerScreen(
                                         viewModel = vm,
-                                        onBack = { showPlayer = false }
+                                        onBack = { vm.setShowPlayer(false) }
                                     )
                                 } else {
                                     HomeScreen(
                                         viewModel = vm,
                                         onAddFolder = { openFolderPicker() },
-                                        onOpenPlayer = { showPlayer = true }
+                                        onOpenPlayer = { vm.setShowPlayer(true) }
                                     )
                                 }
                             }
@@ -113,5 +120,21 @@ class MainActivity : ComponentActivity() {
 
     private fun openFolderPicker() {
         folderPickerLauncher.launch(null)
+    }
+}
+
+/**
+ * Pantalla neutra mientras se lee la última pantalla guardada. Evita mostrar la
+ * biblioteca como contenido provisional antes del reproductor.
+ */
+@Composable
+private fun ScreenLoading() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
     }
 }

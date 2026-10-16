@@ -8,6 +8,7 @@ import android.provider.DocumentsContract
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -15,6 +16,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
 import com.cloudjex.jexplayer.data.local.LibraryCache
+import com.cloudjex.jexplayer.data.local.ScreenPreferenceStore
 import com.cloudjex.jexplayer.data.model.AudioTags
 import com.cloudjex.jexplayer.data.model.CachedSong
 import com.cloudjex.jexplayer.data.model.MusicFolder
@@ -30,6 +32,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -47,7 +50,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val albumArtStore = AlbumArtStore.from(appContext)
     private val scanner = SafMusicScanner(appContext, albumArtStore)
     private val libraryCache = LibraryCache.from(appContext)
+    private val screenPreferences = ScreenPreferenceStore.from(appContext)
     private var scanJob: Job? = null
+    private var userChangedScreen = false
     private var audioTagsJob: Job? = null
 
     private var cachedEntries: List<CachedSong> = emptyList()
@@ -127,6 +132,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _audioTags = MutableStateFlow<AudioTags?>(null)
     val audioTags: StateFlow<AudioTags?> = _audioTags.asStateFlow()
 
+    /**
+     * `true` = reproductor, `false` = biblioteca, `null` = preferencia aún sin
+     * resolver. La UI no dibuja ninguna de las dos pantallas hasta que deja de
+     * ser `null`, así el destino restaurado aparece desde el primer render.
+     */
+    private val _showPlayer = MutableStateFlow<Boolean?>(null)
+    val showPlayer: StateFlow<Boolean?> = _showPlayer.asStateFlow()
+
     /** Caché en memoria por canción para no releer el archivo en cada visita. */
     private val audioTagsCache = mutableMapOf<String, AudioTags?>()
 
@@ -139,6 +152,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 controller = connected
                 connected.addListener(playerListener)
 
+                // Al conectar con una sesión ya activa (p. ej. el servicio sigue
+                // reproduciendo tras cerrar la Activity), los Player.Listener no
+                // reciben el estado actual. Lo leemos una vez de forma explícita.
+                syncStateFromController(connected)
+
                 pendingAction?.let { action ->
                     action(connected)
                     pendingAction = null
@@ -149,6 +167,43 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         startProgressTracking()
         reloadLibrary()
+
+        // Se resuelve la preferencia antes de que la UI dibuje Home o Player;
+        // hasta entonces `showPlayer` es `null` y no se muestra ninguna pantalla.
+        viewModelScope.launch {
+            val saved = screenPreferences.lastScreen.first()
+            if (!userChangedScreen) {
+                _showPlayer.value = saved
+            }
+        }
+    }
+
+    /**
+     * Vuelca el estado actual del reproductor en los StateFlow del ViewModel.
+     * Necesario al conectar con una MediaSession ya activa: el MediaController no
+     * reemite el estado existente a los listeners añadidos tras la conexión.
+     * No crea una nueva instancia ni reinicia la reproducción.
+     */
+    private fun syncStateFromController(controller: MediaController) {
+        controller.currentMediaItem?.mediaId?.let { songId ->
+            _currentSongId.value = songId
+            _songs.value.find { it.id == songId }?.let { song ->
+                _duration.value = song.duration
+            }
+        }
+
+        val controllerDuration = controller.duration
+        if (controllerDuration != C.TIME_UNSET && controllerDuration > 0L) {
+            _duration.value = controllerDuration
+        }
+
+        _currentPosition.value = controller.currentPosition.coerceAtLeast(0L)
+        _isPlaying.value = controller.isPlaying
+        _isShuffleEnabled.value = controller.shuffleModeEnabled
+        _repeatMode.value = when (controller.repeatMode) {
+            Player.REPEAT_MODE_ONE -> RepeatMode.ONE
+            else -> RepeatMode.OFF
+        }
     }
 
     fun onFolderSelected(uri: Uri?) {
@@ -224,6 +279,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshLibrary() {
         reloadLibrary()
+    }
+
+    /**
+     * Cambia de pantalla y la persiste. Solo escribe cuando el valor cambia de
+     * verdad, así las recomposiciones de Compose no generan escrituras.
+     */
+    fun setShowPlayer(showPlayer: Boolean) {
+        userChangedScreen = true
+        if (_showPlayer.value == showPlayer) return
+
+        _showPlayer.value = showPlayer
+        viewModelScope.launch { screenPreferences.save(showPlayer) }
     }
 
     private suspend fun updateLibrary(folders: List<Uri>) {
@@ -342,19 +409,35 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val startIndex = songs.indexOfFirst { it.id == song.id }
 
             if (startIndex >= 0) {
-                controller.setMediaItems(
-                    songs.map { item -> item.toMediaItem() },
-                    startIndex,
-                    0L
-                )
+                if (controllerHasQueue(controller, songs)) {
+                    controller.seekTo(startIndex, 0L)
+                } else {
+                    controller.setMediaItems(
+                        songs.map { item -> item.toMediaItem() },
+                        startIndex,
+                        0L
+                    )
+                    controller.shuffleModeEnabled = _isShuffleEnabled.value
+                    controller.prepare()
+                }
             } else {
                 controller.setMediaItem(song.toMediaItem())
+                controller.shuffleModeEnabled = _isShuffleEnabled.value
+                controller.prepare()
             }
 
-            controller.shuffleModeEnabled = _isShuffleEnabled.value
-            controller.prepare()
             controller.play()
         }
+    }
+
+    private fun controllerHasQueue(controller: MediaController, songs: List<Song>): Boolean {
+        if (controller.mediaItemCount != songs.size) return false
+
+        for (index in songs.indices) {
+            if (controller.getMediaItemAt(index).mediaId != songs[index].id) return false
+        }
+
+        return true
     }
 
     private fun runOnController(action: (MediaController) -> Unit) {
