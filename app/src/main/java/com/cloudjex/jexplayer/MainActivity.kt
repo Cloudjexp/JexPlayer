@@ -24,6 +24,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -31,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cloudjex.jexplayer.ui.home.HomeScreen
 import com.cloudjex.jexplayer.ui.home.WelcomeScreen
+import com.cloudjex.jexplayer.ui.home.SettingsScreen
 import com.cloudjex.jexplayer.ui.player.PlayerScreen
 import com.cloudjex.jexplayer.ui.theme.JexPlayerTheme
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
@@ -56,9 +60,14 @@ class MainActivity : ComponentActivity() {
                 viewModel = vm
                 val folders by vm.folders.collectAsState()
                 val restoredScreen by vm.showPlayer.collectAsState()
+                var settingsOpen by rememberSaveable { mutableStateOf(false) }
 
-                BackHandler(enabled = restoredScreen == true) {
-                    vm.setShowPlayer(false)
+                BackHandler(enabled = settingsOpen || restoredScreen == true) {
+                    if (settingsOpen) {
+                        settingsOpen = false
+                    } else {
+                        vm.setShowPlayer(false)
+                    }
                 }
 
                 val transitionOffsetPx = with(LocalDensity.current) { 20.dp.roundToPx() }
@@ -74,7 +83,13 @@ class MainActivity : ComponentActivity() {
                             // la biblioteca, para no parpadear antes del reproductor.
                             screen == null -> ScreenLoading()
 
-                            else -> AnimatedContent(
+                            else -> if (settingsOpen) {
+                                SettingsScreen(
+                                    viewModel = vm,
+                                    onBack = { settingsOpen = false },
+                                    onAddFolder = { openFolderPicker() }
+                                )
+                            } else AnimatedContent(
                                 targetState = screen,
                                 transitionSpec = {
                                     if (targetState) {
@@ -106,8 +121,8 @@ class MainActivity : ComponentActivity() {
                                 } else {
                                     HomeScreen(
                                         viewModel = vm,
-                                        onAddFolder = { openFolderPicker() },
-                                        onOpenPlayer = { vm.setShowPlayer(true) }
+                                        onOpenPlayer = { vm.setShowPlayer(true) },
+                                        onOpenSettings = { settingsOpen = true }
                                     )
                                 }
                             }
