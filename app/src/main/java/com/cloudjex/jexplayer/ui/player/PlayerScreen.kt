@@ -138,9 +138,11 @@ fun PlayerScreen(
         // Si showLyrics es true, se dibuja encima cubriendo toda la pantalla
         if (showLyrics && currentSong != null) {
             LyricsScreen(
+                onSeek = { viewModel.seekTo(it) },
                 song = currentSong,
                 tags = audioTags,
                 onClose = { showLyrics = false })
+
         }
     }
 }
@@ -513,7 +515,7 @@ private fun PlayerEmptyState(modifier: Modifier) {
     }
 }
 
-private fun formatDuration(durationMs: Long): String {
+fun formatDuration(durationMs: Long): String {
     val totalSeconds = durationMs / 1000
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
