@@ -1,8 +1,9 @@
 package com.cloudjex.jexplayer.ui.home
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,14 +23,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.Canvas
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,36 +46,38 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.input.pointer.pointerInput
 import coil3.compose.AsyncImage
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
+import com.cloudjex.jexplayer.ui.theme.JexProgress
 
 @Composable
 fun HomeScreen(
     viewModel: MusicViewModel,
-    onAddFolder: () -> Unit,
-    onOpenPlayer: () -> Unit
+    onOpenPlayer: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val songs by viewModel.songs.collectAsState()
     val folders by viewModel.folders.collectAsState()
     val revokedFolderUris by viewModel.revokedFolderUris.collectAsState()
     val folderMessage by viewModel.folderMessage.collectAsState()
     val currentSongId by viewModel.currentSongId.collectAsState()
+    val restoredSong by viewModel.restoredSong.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val isShuffleEnabled by viewModel.isShuffleEnabled.collectAsState()
@@ -79,13 +86,18 @@ fun HomeScreen(
     val duration by viewModel.duration.collectAsState()
 
     val currentSong = songs.find { it.id == currentSongId }
+        ?: restoredSong?.takeIf { it.id == currentSongId }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var isSearchVisible by rememberSaveable { mutableStateOf(false) }
+    var showFilters by rememberSaveable { mutableStateOf(false) }
+    var selectedFolderUri by rememberSaveable { mutableStateOf<String?>(null) }
 
     val filteredSongs = songs.filter { song ->
-        song.title.contains(searchQuery, ignoreCase = true) ||
+        (selectedFolderUri == null || song.id.startsWith("${selectedFolderUri}/")) &&
+                (song.title.contains(searchQuery, ignoreCase = true) ||
                 song.artist.contains(searchQuery, ignoreCase = true) ||
-                song.album.contains(searchQuery, ignoreCase = true)
+                song.album.contains(searchQuery, ignoreCase = true))
     }
 
     Column(
@@ -95,32 +107,54 @@ fun HomeScreen(
     ) {
         LibraryHeader(
             isScanning = isScanning,
-            onRefresh = { viewModel.refreshLibrary() },
-            onAddFolder = onAddFolder
+            isSearchVisible = isSearchVisible,
+            onSearch = { isSearchVisible = true },
+            onSettings = onOpenSettings
         )
 
-        SearchField(
-            query = searchQuery,
-            onQueryChange = { searchQuery = it }
+        AnimatedVisibility(
+            visible = isSearchVisible,
+            enter = fadeIn() + expandHorizontally(expandFrom = Alignment.End),
+            exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.End)
+        ) {
+            SearchField(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                onClose = {
+                    searchQuery = ""
+                    isSearchVisible = false
+                }
+            )
+        }
+
+        LibrarySummary(
+            songCount = songs.size,
+            filtersVisible = showFilters,
+            onToggleFilters = { showFilters = !showFilters }
         )
 
-        LibraryTitle(
-            isSearching = searchQuery.isNotBlank(),
-            songCount = filteredSongs.size
-        )
-
-        FoldersRow(
+        if (showFilters) FoldersFilterRow(
             folders = folders,
             revokedFolderUris = revokedFolderUris,
-            message = folderMessage,
-            onRemoveFolder = { viewModel.removeFolder(it) }
+            selectedFolderUri = selectedFolderUri,
+            onFolderSelected = { selectedFolderUri = it }
         )
+
+        folderMessage?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+            )
+        }
 
         Box(modifier = Modifier.weight(1f)) {
             if (filteredSongs.isEmpty()) {
                 EmptyLibrary(
                     message = when {
-                        searchQuery.isNotBlank() -> "No se encontraron canciones para tu búsqueda."
+                        searchQuery.isNotBlank() || selectedFolderUri != null ->
+                            "No se encontraron canciones con estos filtros."
                         isScanning -> "Escaneando carpetas…"
                         else -> "No se encontraron archivos de audio en las carpetas seleccionadas."
                     }
@@ -166,42 +200,54 @@ fun HomeScreen(
 @Composable
 private fun LibraryHeader(
     isScanning: Boolean,
-    onRefresh: () -> Unit,
-    onAddFolder: () -> Unit
+    isSearchVisible: Boolean,
+    onSearch: () -> Unit,
+    onSettings: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 8.dp, top = 8.dp),
+            .padding(start = 20.dp, end = 8.dp, top = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.Bottom) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "JexPlayer",
-                style = MaterialTheme.typography.headlineMedium,
+                text = "夜",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column {
+            Text(
+                text = "BIBLIOTECA",
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
-                fontStyle = FontStyle.Italic
+                letterSpacing = 2.sp
             )
+            }
         }
 
         Spacer(modifier = Modifier.weight(1f))
 
-        IconButton(onClick = onRefresh, enabled = !isScanning) {
-            Icon(
-                imageVector = JexRefreshIcon,
-                contentDescription = "Actualizar biblioteca",
-                tint = if (isScanning) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.onBackground
-                }
-            )
+        AnimatedVisibility(
+            visible = !isSearchVisible,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            IconButton(onClick = onSearch) {
+                Icon(
+                    imageVector = JexSearchIcon,
+                    contentDescription = "Buscar canciones",
+                    tint = MaterialTheme.colorScheme.onBackground
+                )
+            }
         }
-        IconButton(onClick = onAddFolder) {
+        IconButton(onClick = onSettings) {
             Icon(
-                imageVector = JexAddIcon,
-                contentDescription = "Añadir carpeta",
+                imageVector = JexSettingsIcon,
+                contentDescription = "Ajustes",
                 tint = MaterialTheme.colorScheme.onBackground
             )
         }
@@ -211,7 +257,7 @@ private fun LibraryHeader(
         LinearProgressIndicator(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 4.dp),
+                .padding(horizontal = 20.dp, vertical = 2.dp),
             color = MaterialTheme.colorScheme.primary,
             trackColor = MaterialTheme.colorScheme.surfaceVariant
         )
@@ -221,17 +267,18 @@ private fun LibraryHeader(
 @Composable
 private fun SearchField(
     query: String,
-    onQueryChange: (String) -> Unit
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(28.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(4.dp),
         color = MaterialTheme.colorScheme.surface
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             BasicTextField(
@@ -254,67 +301,86 @@ private fun SearchField(
                     innerTextField()
                 }
             )
+            IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    imageVector = JexCloseIcon,
+                    contentDescription = "Cerrar búsqueda",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibrarySummary(
+    songCount: Int,
+    filtersVisible: Boolean,
+    onToggleFilters: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = if (songCount == 1) "1 canción" else "$songCount canciones",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        IconButton(onClick = onToggleFilters, modifier = Modifier.size(32.dp)) {
             Icon(
-                imageVector = JexSearchIcon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(22.dp)
+                imageVector = JexFilterIcon,
+                contentDescription = if (filtersVisible) "Ocultar filtros" else "Mostrar filtros",
+                tint = if (filtersVisible) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
             )
         }
     }
 }
 
 @Composable
-private fun LibraryTitle(
-    isSearching: Boolean,
-    songCount: Int
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = if (isSearching) "Resultados" else "canciones",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground
-        )
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        Text(
-            text = if (songCount == 1) "1 canción" else "$songCount canciones",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-private fun FoldersRow(
+private fun FoldersFilterRow(
     folders: List<MusicFolder>,
     revokedFolderUris: Set<String>,
-    message: String?,
-    onRemoveFolder: (MusicFolder) -> Unit
+    selectedFolderUri: String?,
+    onFolderSelected: (String?) -> Unit
 ) {
-    if (folders.isEmpty() && message == null) return
+    if (folders.isEmpty()) return
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = 20.dp, vertical = 2.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = if (selectedFolderUri == null) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surface,
+                modifier = Modifier.clickable { onFolderSelected(null) }
+            ) {
+                Text(
+                    text = "Todas",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                )
+            }
             folders.forEach { folder ->
                 val isRevoked = folder.uri in revokedFolderUris
                 Surface(
                     shape = RoundedCornerShape(50),
                     color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.clickable { onFolderSelected(folder.uri) },
                     border = if (isRevoked) {
                         androidx.compose.foundation.BorderStroke(
                             1.dp,
@@ -326,27 +392,16 @@ private fun FoldersRow(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                     ) {
                         Text(
                             text = folder.name,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.widthIn(max = 160.dp)
                         )
-                        IconButton(
-                            onClick = { onRemoveFolder(folder) },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Icon(
-                                imageVector = JexCloseIcon,
-                                contentDescription = "Quitar carpeta ${folder.name}",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
                     }
                 }
             }
@@ -357,18 +412,10 @@ private fun FoldersRow(
                 text = "Permiso revocado en ${revokedFolderUris.size} carpeta(s): vuelve a seleccionarla.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
             )
         }
 
-        message?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-            )
-        }
     }
 }
 
@@ -399,54 +446,62 @@ private fun SongItem(
     isCurrent: Boolean,
     onClick: () -> Unit
 ) {
-    Row(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .background(
-                if (isCurrent) {
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                } else {
-                    Color.Transparent
-                }
-            )
-            .padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        color = if (isCurrent) {
+            // El estado activo se reconoce sin convertir la fila en un bloque rojo.
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+        } else {
+            MaterialTheme.colorScheme.surfaceContainer
+        }
     ) {
-        SongArtwork(song = song, size = 54.dp, cornerRadius = 12.dp)
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SongArtwork(song = song, size = 82.dp, cornerRadius = 10.dp)
 
-        Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(14.dp))
 
-        Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = song.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isCurrent) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = song.artist.ifBlank { "Artista desconocido" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (song.album.isNotBlank()) {
+                    Text(
+                        text = song.album,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(10.dp))
             Text(
-                text = song.title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isCurrent) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = song.artist,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                text = formatDuration(song.duration),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Text(
-            text = formatDuration(song.duration),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 
@@ -483,7 +538,7 @@ private fun MiniPlayer(
     onSeek: (Long) -> Unit,
     onOpenPlayer: () -> Unit
 ) {
-    // Posición temporal del Slider mientras el usuario arrastra.
+    // Posición temporal mientras el usuario arrastra la barra editorial.
     var isDragging by remember { mutableStateOf(false) }
     var draggedPosition by remember { mutableStateOf(0f) }
 
@@ -498,11 +553,11 @@ private fun MiniPlayer(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp
+        tonalElevation = 0.dp
     ) {
-        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Row(
                     modifier = Modifier
@@ -581,34 +636,72 @@ private fun MiniPlayer(
 
                 Text(
                     text = formatDuration(sliderValue.toLong()),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.25.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Slider(
-                    value = sliderValue,
-                    onValueChange = { newValue ->
-                        isDragging = true
-                        draggedPosition = newValue
-                    },
-                    onValueChangeFinished = {
-                        onSeek(draggedPosition.toLong())
-                        isDragging = false
-                    },
-                    valueRange = 0f..sliderMax,
-                    colors = SliderDefaults.colors(
-                        thumbColor = MaterialTheme.colorScheme.primary,
-                        activeTrackColor = MaterialTheme.colorScheme.primary,
-                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
-                    ),
+                Box(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 6.dp)
-                )
+                        // Área táctil cómoda sin convertir la línea en una cápsula.
+                        .height(24.dp)
+                        .padding(horizontal = 5.dp)
+                        .pointerInput(sliderMax) {
+                            detectTapGestures { offset ->
+                                val fraction =
+                                    (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                                onSeek((fraction * sliderMax).toLong())
+                            }
+                        }
+                        .pointerInput(sliderMax) {
+                            detectDragGestures(
+                                onDragStart = { offset ->
+                                    isDragging = true
+                                    val fraction =
+                                        (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                                    draggedPosition = fraction * sliderMax
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val fraction =
+                                        (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+                                    draggedPosition = fraction * sliderMax
+                                },
+                                onDragEnd = {
+                                    onSeek(draggedPosition.toLong())
+                                    isDragging = false
+                                }
+                            )
+                        }
+                ) {
+                    val trackColor = MaterialTheme.colorScheme.outlineVariant
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val centerY = size.height / 2f
+                        val progressX = size.width * (sliderValue / sliderMax)
+
+                        drawLine(
+                            color = trackColor,
+                            start = Offset(0f, centerY),
+                            end = Offset(size.width, centerY),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                        drawLine(
+                            color = JexProgress,
+                            start = Offset(0f, centerY),
+                            end = Offset(progressX, centerY),
+                            strokeWidth = 1.5.dp.toPx()
+                        )
+                        drawCircle(
+                            color = JexProgress,
+                            radius = 2.5.dp.toPx(),
+                            center = Offset(progressX, centerY)
+                        )
+                    }
+                }
 
                 Text(
                     text = formatDuration(duration),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.25.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
@@ -667,11 +760,11 @@ private fun JexBottomBar() {
         BottomBarItem(JexFolderIcon, "Carpetas", selected = false)
     )
 
-    Surface(color = MaterialTheme.colorScheme.surface) {
+    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 10.dp)
+                .padding(vertical = 8.dp)
         ) {
             items.forEach { item ->
                 val tint = if (item.selected) {
@@ -695,6 +788,16 @@ private fun JexBottomBar() {
                         text = item.label,
                         style = MaterialTheme.typography.labelSmall,
                         color = tint
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(width = 18.dp, height = 2.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(
+                                if (item.selected) MaterialTheme.colorScheme.primary
+                                else Color.Transparent
+                            )
                     )
                 }
             }
@@ -735,6 +838,11 @@ private val JexSearchIcon = jexVector(
         "19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"
 )
 
+private val JexFilterIcon = jexVector(
+    "JexFilter",
+    "M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"
+)
+
 private val JexRefreshIcon = jexVector(
     "JexRefresh",
     "M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 " +
@@ -745,6 +853,11 @@ private val JexRefreshIcon = jexVector(
 private val JexAddIcon = jexVector(
     "JexAdd",
     "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"
+)
+
+private val JexSettingsIcon = jexVector(
+    "JexSettings",
+    "M19.43 12.98c.04-.32.07-.65.07-.98s-.02-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.37-.31-.6-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98L14.5 2.42C14.47 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.5.42L9.12 5.07c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.08-.48 0-.6.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.08.65-.08.98s.03.66.08.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.37.31.6.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.38-2.65c.61-.25 1.17-.58 1.69-.98l2.49 1c.23.08.48 0 .6-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z"
 )
 
 private val JexCloseIcon = jexVector(

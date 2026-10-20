@@ -1,6 +1,5 @@
 package com.cloudjex.jexplayer.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -12,7 +11,7 @@ private val JexDarkColorScheme = darkColorScheme(
     onPrimary = JexOnPrimary,
     primaryContainer = JexPrimaryContainer,
     onPrimaryContainer = JexTextPrimary,
-    inversePrimary = JexVioletDark,
+    inversePrimary = JexRedSecondary,
 
     secondary = JexViolet,
     onSecondary = JexOnViolet,
@@ -42,8 +41,8 @@ private val JexDarkColorScheme = darkColorScheme(
 
     surfaceBright = JexSurfaceBright,
     surfaceDim = JexBackground,
-    surfaceContainerLowest = Color(0xFF0C0B12),
-    surfaceContainerLow = Color(0xFF191621),
+    surfaceContainerLowest = JexBackground,
+    surfaceContainerLow = JexSurface,
     surfaceContainer = JexSurface,
     surfaceContainerHigh = JexSurfaceElevated,
     surfaceContainerHighest = JexSurfaceBright
@@ -77,7 +76,7 @@ private val JexLightColorScheme = lightColorScheme(
 
 @Composable
 fun JexPlayerTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = true,
     @Suppress("UNUSED_PARAMETER") dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {

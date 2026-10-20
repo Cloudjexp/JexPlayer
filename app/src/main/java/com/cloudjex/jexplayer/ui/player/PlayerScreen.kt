@@ -1,17 +1,16 @@
 package com.cloudjex.jexplayer.ui.player
 
-import android.R.attr.onClick
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,8 +29,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,8 +49,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,17 +60,17 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.ui.theme.JexPrimary
-import com.cloudjex.jexplayer.ui.theme.JexViolet
-import com.cloudjex.jexplayer.ui.theme.JexVioletDark
+import com.cloudjex.jexplayer.ui.theme.JexProgress
+import com.cloudjex.jexplayer.ui.theme.JexRedSecondary
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import kotlin.math.PI
 import kotlin.math.sin
 import com.cloudjex.jexplayer.ui.icons.JexArrowBackIcon
 import com.cloudjex.jexplayer.ui.icons.JexMusicIcon
+import com.cloudjex.jexplayer.ui.icons.JexLyricsIcon
 import com.cloudjex.jexplayer.ui.icons.JexRepeatIcon
 import com.cloudjex.jexplayer.ui.icons.JexShuffleIcon
-import com.cloudjex.jexplayer.ui.icons.JexMoreIcon
 import com.cloudjex.jexplayer.ui.icons.JexPlayIcon
 import com.cloudjex.jexplayer.ui.icons.JexRepeatOneIcon
 import com.cloudjex.jexplayer.ui.icons.JexSkipNextIcon
@@ -87,6 +84,7 @@ fun PlayerScreen(
 ) {
     val songs by viewModel.songs.collectAsState()
     val currentSongId by viewModel.currentSongId.collectAsState()
+    val restoredSong by viewModel.restoredSong.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val isShuffleEnabled by viewModel.isShuffleEnabled.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
@@ -95,6 +93,7 @@ fun PlayerScreen(
     val audioTags by viewModel.audioTags.collectAsState()
 
     val currentSong = songs.find { it.id == currentSongId }
+        ?: restoredSong?.takeIf { it.id == currentSongId }
 
     // Estado para controlar si se muestra la pantalla de letra
     var showLyrics by remember { mutableStateOf(false) }
@@ -164,7 +163,7 @@ private fun PlayerTopBar(onBack: () -> Unit) {
         }
 
         Text(
-            text = "REPRODUCIENDO AHORA",
+            text = "REPRODUCTOR",
             style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.5.sp),
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -173,14 +172,7 @@ private fun PlayerTopBar(onBack: () -> Unit) {
             modifier = Modifier.weight(1f)
         )
 
-        Icon(
-            imageVector = JexMoreIcon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .padding(horizontal = 12.dp)
-                .size(24.dp)
-        )
+        Spacer(modifier = Modifier.size(48.dp))
     }
 }
 
@@ -205,7 +197,7 @@ private fun PlayerContent(
         modifier = modifier
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         PlayerArtwork(song = song, onClick = onArtworkClick) // <-- Pasamos la función aquí
 
@@ -231,6 +223,17 @@ private fun PlayerContent(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            if (song.album.isNotBlank()) {
+                Text(
+                    text = song.album,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
         }
 
         AudioVisualizer(isPlaying = isPlaying)
@@ -276,18 +279,14 @@ private fun PlayerArtwork(song: Song, onClick: () -> Unit) {
             error = placeholderPainter,
             fallback = placeholderPainter
         )
-        Text(
-            text = "Letra",
-            color = Color.White,
-            fontSize = 12.sp,
-            fontStyle = FontStyle.Italic,
-            fontWeight = FontWeight.Bold,
+        Icon(
+            imageVector = JexLyricsIcon,
+            contentDescription = "Letras de canciones",
+            tint = Color.White,
             modifier = Modifier
-                .align (Alignment.BottomEnd)
-                .padding(4.dp)
-                .border( width = 1.dp, color = Color.White, shape = RoundedCornerShape(20.dp))
-                .background(color = Color.Black.copy(alpha = 0.5f), shape = RoundedCornerShape(20.dp))
-                .padding(horizontal = 8.dp, vertical = 2.dp),
+                .align(Alignment.BottomEnd)
+                .padding(8.dp)
+                .size(24.dp)
         )
     }
 }
@@ -314,34 +313,70 @@ private fun PlayerProgress(
     ) {
         Text(
             text = formatDuration(sliderValue.toLong()),
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.4.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        Slider(
-            value = sliderValue,
-            onValueChange = { newValue ->
-                isDragging = true
-                draggedPosition = newValue
-            },
-            onValueChangeFinished = {
-                onSeek(draggedPosition.toLong())
-                isDragging = false
-            },
-            valueRange = 0f..sliderMax,
-            colors = SliderDefaults.colors(
-                thumbColor = MaterialTheme.colorScheme.primary,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-                inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
-            ),
+        Box(
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 8.dp)
-        )
+                // La zona táctil es amplia aunque la línea sea deliberadamente fina.
+                .height(28.dp)
+                .padding(horizontal = 6.dp)
+                .pointerInput(sliderMax) {
+                    detectTapGestures { offset ->
+                        val fraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                        onSeek((fraction * sliderMax).toLong())
+                    }
+                }
+                .pointerInput(sliderMax) {
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            isDragging = true
+                            val fraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                            draggedPosition = fraction * sliderMax
+                        },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            val fraction =
+                                (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+                            draggedPosition = fraction * sliderMax
+                        },
+                        onDragEnd = {
+                            onSeek(draggedPosition.toLong())
+                            isDragging = false
+                        }
+                    )
+                }
+        ) {
+            val trackColor = MaterialTheme.colorScheme.outlineVariant
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val centerY = size.height / 2f
+                val progressX = size.width * (sliderValue / sliderMax)
+
+                drawLine(
+                    color = trackColor,
+                    start = Offset(0f, centerY),
+                    end = Offset(size.width, centerY),
+                    strokeWidth = 1.dp.toPx()
+                )
+                drawLine(
+                    color = JexProgress,
+                    start = Offset(0f, centerY),
+                    end = Offset(progressX, centerY),
+                    strokeWidth = 1.5.dp.toPx()
+                )
+                drawCircle(
+                    color = JexProgress,
+                    radius = 3.dp.toPx(),
+                    center = Offset(progressX, centerY)
+                )
+            }
+        }
 
         Text(
             text = formatDuration(duration),
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.4.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
@@ -387,7 +422,7 @@ private fun PlayerControls(
 
         Box(
             modifier = Modifier
-                .size(64.dp)
+            .size(58.dp)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primary)
                 .clickable(onClick = onPlayPause),
@@ -397,7 +432,7 @@ private fun PlayerControls(
                 imageVector = if (isPlaying) JexPauseIcon else JexPlayIcon,
                 contentDescription = if (isPlaying) "Pausar" else "Reproducir",
                 tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(30.dp)
+                modifier = Modifier.size(28.dp)
             )
         }
 
@@ -455,28 +490,35 @@ private fun AudioVisualizer(
             .fillMaxWidth()
             .height(32.dp)
     ) {
-        val slot = 9.dp.toPx()
-        val count = (size.width / slot).toInt().coerceIn(12, 42)
+        val slot = 10.dp.toPx()
+        val count = (size.width / slot).toInt().coerceIn(12, 38)
         val step = size.width / count
-        val barWidth = (step * 0.42f).coerceAtLeast(1.5.dp.toPx())
-        val radius = barWidth / 2f
+        val baseBarWidth = (step * 0.34f).coerceAtLeast(1.5.dp.toPx())
         val minFraction = 0.12f
         val maxFraction = 0.88f
         val fullTurn = (2 * PI).toFloat()
 
         val brush = Brush.horizontalGradient(
-            colors = listOf(JexVioletDark, JexViolet, JexPrimary)
+            colors = listOf(JexRedSecondary, JexPrimary, JexRedSecondary)
         )
 
         for (index in 0 until count) {
             val n = index.toFloat()
+
+            // Variación determinista para evitar un patrón de ecualizador uniforme.
+            val barWidth = (baseBarWidth * (0.72f + 0.42f *
+                    (sin(n * 0.73f + 1.2f) * 0.5f + 0.5f)))
+                .coerceAtLeast(1.5.dp.toPx())
+            val radius = barWidth / 2f
 
             val wave = sin(fullTurn * progress + n * 0.55f) * 0.5f +
                     sin(fullTurn * 2f * progress + n * 1.15f + 0.8f) * 0.3f +
                     sin(fullTurn * 3f * progress + n * 0.35f + 2.1f) * 0.2f
             val dynamic = ((wave + 1f) * 0.5f).coerceIn(0f, 1f)
 
-            val fraction = minFraction + dynamic * amplitude * (maxFraction - minFraction)
+            val organicHeight = 0.78f + 0.22f * (sin(n * 0.37f + 0.9f) * 0.5f + 0.5f)
+            val fraction = minFraction + dynamic * amplitude * organicHeight *
+                    (maxFraction - minFraction)
             val barHeight = fraction * size.height
             val left = index * step + (step - barWidth) / 2f
             val top = size.height - barHeight

@@ -16,6 +16,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
 import com.cloudjex.jexplayer.data.local.LibraryCache
+import com.cloudjex.jexplayer.data.local.LastSongStore
 import com.cloudjex.jexplayer.data.local.ScreenPreferenceStore
 import com.cloudjex.jexplayer.data.model.AudioTags
 import com.cloudjex.jexplayer.data.model.CachedSong
@@ -51,6 +52,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val scanner = SafMusicScanner(appContext, albumArtStore)
     private val libraryCache = LibraryCache.from(appContext)
     private val screenPreferences = ScreenPreferenceStore.from(appContext)
+    private val lastSongStore = LastSongStore(appContext)
+    private val restoredLastSong = lastSongStore.load()
     private var scanJob: Job? = null
     private var userChangedScreen = false
     private var audioTagsJob: Job? = null
@@ -73,7 +76,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _currentSongId.value = songId
             _currentPosition.value = 0L
             _audioTags.value = audioTagsCache[songId]
-            _songs.value.find { it.id == songId }?.let { song ->
+            (_songs.value.find { it.id == songId } ?: mediaItem?.toSongFallback())?.let { song ->
+                _restoredSong.value = song
+                lastSongStore.save(song, 0L)
                 _duration.value = song.duration
                 // Los tags se cargan solos en cada cambio de canción, así están
                 // disponibles en cualquier pantalla sin que la UI lo pida.
@@ -99,8 +104,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs.asStateFlow()
 
-    private val _currentSongId = MutableStateFlow<String?>(null)
+    private val _currentSongId = MutableStateFlow(restoredLastSong?.song?.id)
     val currentSongId: StateFlow<String?> = _currentSongId.asStateFlow()
+
+    private val _restoredSong = MutableStateFlow(restoredLastSong?.song)
+    val restoredSong: StateFlow<Song?> = _restoredSong.asStateFlow()
 
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
@@ -108,10 +116,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
-    private val _currentPosition = MutableStateFlow(0L)
+    private val _currentPosition = MutableStateFlow(restoredLastSong?.position ?: 0L)
     val currentPosition: StateFlow<Long> = _currentPosition.asStateFlow()
 
-    private val _duration = MutableStateFlow(0L)
+    private val _duration = MutableStateFlow(restoredLastSong?.song?.duration ?: 0L)
     val duration: StateFlow<Long> = _duration.asStateFlow()
 
     private val _isShuffleEnabled = MutableStateFlow(false)
@@ -187,7 +195,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun syncStateFromController(controller: MediaController) {
         controller.currentMediaItem?.mediaId?.let { songId ->
             _currentSongId.value = songId
-            _songs.value.find { it.id == songId }?.let { song ->
+            (_songs.value.find { it.id == songId }
+                ?: controller.currentMediaItem?.toSongFallback())?.let { song ->
+                _restoredSong.value = song
+                lastSongStore.save(song, controller.currentPosition)
                 _duration.value = song.duration
             }
         }
@@ -324,6 +335,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _songs.value = merged.map { it.toSong() }
         _isScanning.value = false
 
+        val restoredId = _currentSongId.value
+        if (restoredId != null) {
+            val resolved = _songs.value.find { it.id == restoredId }
+            if (resolved != null) {
+                _restoredSong.value = resolved
+            } else if (controller?.currentMediaItem == null) {
+                _currentSongId.value = null
+                _restoredSong.value = null
+                lastSongStore.clear()
+            }
+        }
+
         if (merged != cachedEntries) {
             cachedEntries = merged
             libraryCache.save(merged)
@@ -401,8 +424,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playSong(song: Song) {
         _currentSongId.value = song.id
+        _restoredSong.value = song
         _currentPosition.value = 0L
         _duration.value = song.duration
+        lastSongStore.save(song, 0L)
 
         runOnController { controller ->
             val songs = _songs.value
@@ -558,6 +583,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun seekTo(position: Long) {
         _currentPosition.value = position
+        _restoredSong.value?.let { lastSongStore.save(it, position) }
         runOnController { controller ->
             controller.seekTo(position)
         }
@@ -570,6 +596,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     if (controller.isPlaying) {
                         _currentPosition.value = controller.currentPosition
                         _duration.value = controller.duration.coerceAtLeast(0L)
+                        _restoredSong.value?.let {
+                            lastSongStore.save(it, _currentPosition.value)
+                        }
                     }
                 }
 
@@ -584,6 +613,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         controller?.removeListener(playerListener)
         controller = null
         pendingAction = null
+        _restoredSong.value?.let { lastSongStore.save(it, _currentPosition.value) }
         MediaController.releaseFuture(controllerFuture)
     }
 }
@@ -601,4 +631,18 @@ private fun Song.toMediaItem(): MediaItem {
         .setMediaId(id)
         .setMediaMetadata(metadata)
         .build()
+}
+
+private fun MediaItem.toSongFallback(): Song? {
+    val id = mediaId.takeIf { it.isNotBlank() } ?: return null
+    val uri = localConfiguration?.uri ?: return null
+    return Song(
+        id = id,
+        title = mediaMetadata.title?.toString().orEmpty().ifBlank { "Sin título" },
+        artist = mediaMetadata.artist?.toString().orEmpty(),
+        album = mediaMetadata.albumTitle?.toString().orEmpty(),
+        duration = 0L,
+        uri = uri,
+        albumArtUri = mediaMetadata.artworkUri
+    )
 }
