@@ -62,4 +62,5 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.jaudiotagger)
+    implementation(libs.androidx.datastore.preferences)
 }
