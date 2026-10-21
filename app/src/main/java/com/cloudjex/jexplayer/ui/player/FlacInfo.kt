@@ -1,9 +1,13 @@
 package com.cloudjex.jexplayer.ui.player
 
 import android.content.Context
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Log
 import com.cloudjex.jexplayer.data.local.FlacStreamReader
+import com.cloudjex.jexplayer.data.model.AudioTechnicalInfo
 import com.cloudjex.jexplayer.data.model.AudioTags
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.Tag
@@ -21,14 +25,120 @@ import java.io.File
 object FlacInfo {
 
     /**
+     * Consulta primero al decodificador multimedia de Android, directamente sobre
+     * la URI SAF. Es una lectura ligera que puede entregar los campos conocidos
+     * antes de copiar y analizar el archivo completo con jAudioTagger.
+     */
+    fun leerInfoRapida(
+        context: Context,
+        uri: Uri,
+        onTechnicalInfoAvailable: (AudioTechnicalInfo) -> Unit = {}
+    ): AudioTechnicalInfo? {
+        val extractor = MediaExtractor()
+        val extractorInfo = try {
+            extractor.setDataSource(context, uri, null)
+            var result = AudioTechnicalInfo()
+            for (trackIndex in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(trackIndex)
+                if (format.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") != true) continue
+
+                val bitRate = format.intOrNull(MediaFormat.KEY_BIT_RATE)?.toLong()
+                val bitsPerSample = format.intOrNull("bits-per-sample")
+                result = result.merge(
+                    AudioTechnicalInfo(
+                        sampleRateHz = format.intOrNull(MediaFormat.KEY_SAMPLE_RATE),
+                        bitRateBps = bitRate,
+                        channelCount = format.intOrNull(MediaFormat.KEY_CHANNEL_COUNT),
+                        bitsPerSample = bitsPerSample
+                    )
+                )
+                break
+            }
+            result.takeIf { it.hasValues }
+        } catch (_: Exception) {
+            null
+        } finally {
+            runCatching { extractor.release() }
+        }
+        extractorInfo?.let { runCatching { onTechnicalInfoAvailable(it) } }
+
+        val flacInfo = leerStreamInfoFlacDesdeSaf(context, uri)
+        val mergedInfo = (extractorInfo ?: AudioTechnicalInfo())
+            .merge(flacInfo ?: AudioTechnicalInfo())
+            .takeIf { it.hasValues }
+        if (flacInfo != null) {
+            mergedInfo?.let { runCatching { onTechnicalInfoAvailable(it) } }
+        }
+        return mergedInfo
+    }
+
+    private fun MediaFormat.intOrNull(key: String): Int? =
+        runCatching { getInteger(key).takeIf { it > 0 } }.getOrNull()
+
+    /** Lee STREAMINFO directamente del proveedor SAF, sin copiar el audio completo. */
+    private fun leerStreamInfoFlacDesdeSaf(context: Context, uri: Uri): AudioTechnicalInfo? {
+        val extension = uri.lastPathSegment?.substringAfterLast('.', "")
+        if (!extension.equals("flac", ignoreCase = true)) return null
+
+        val fileSize = runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.SIZE),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                    cursor.getLong(0).takeIf { it > 0L }
+                } else {
+                    null
+                }
+            }
+        }.getOrNull() ?: 0L
+
+        return runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                FlacStreamReader.leer(input, fileSize)?.let { stream ->
+                    AudioTechnicalInfo(
+                        sampleRateHz = stream.sampleRate,
+                        bitRateBps = stream.bitRateBps.takeIf { it > 0L },
+                        channelCount = stream.canales,
+                        bitsPerSample = stream.bitsPorMuestra
+                    )
+                }
+            }
+        }.getOrNull()
+    }
+
+    /**
      * Lee las letras y los metadatos técnicos del audio en [uri].
      *
      * @return un [AudioTags] con toda la información disponible, o `null` si el
      *   archivo no se pudo copiar o leer.
      */
-    fun leerTags(context: Context, uri: Uri): AudioTags? {
+    fun leerTags(
+        context: Context,
+        uri: Uri,
+        onTechnicalInfoAvailable: (AudioTechnicalInfo) -> Unit = {}
+    ): AudioTags? {
         val archivo = copiarALaCache(context, uri) ?: return null
         return try {
+            // STREAMINFO permite publicar pronto los datos FLAC incluso si el
+            // lector general de etiquetas no reconoce el archivo posteriormente.
+            val flac = FlacStreamReader.leer(archivo)
+            flac?.let { info ->
+                runCatching {
+                    onTechnicalInfoAvailable(
+                        AudioTechnicalInfo(
+                            sampleRateHz = info.sampleRate,
+                            bitRateBps = info.bitRateBps.takeIf { it > 0L },
+                            channelCount = info.canales,
+                            bitsPerSample = info.bitsPorMuestra
+                        )
+                    )
+                }
+            }
+
             val audioFile = runCatching { AudioFileIO.read(archivo) }
                 .recoverCatching { AudioFileIO.readMagic(archivo) }
                 .getOrElse { error ->
@@ -38,23 +148,33 @@ object FlacInfo {
             val tag = audioFile.tag
             val header = audioFile.audioHeader
 
-            // Para FLAC preferimos el bloque STREAMINFO: es la fuente de verdad y
-            // no arrastra el peso de la portada al calcular el bitrate.
-            val flac = FlacStreamReader.leer(archivo)
+            val sampleRate = flac?.sampleRate
+                ?: runCatching { header.sampleRateAsNumber }.getOrDefault(0)
+            val bitRate = (flac?.bitRateBps
+                ?: runCatching { header.bitRateAsNumber * 1000L }.getOrDefault(0L))
+                .coerceIn(0L, Int.MAX_VALUE.toLong())
+                .toInt()
+            val channels = flac?.canales ?: header.channels?.trim()?.toIntOrNull() ?: 0
+            val bitsPerSample = flac?.bitsPorMuestra ?: 0
+            runCatching {
+                onTechnicalInfoAvailable(
+                    AudioTechnicalInfo(
+                        sampleRateHz = sampleRate.takeIf { it > 0 },
+                        bitRateBps = bitRate.toLong().takeIf { it > 0L },
+                        channelCount = channels.takeIf { it > 0 },
+                        bitsPerSample = bitsPerSample.takeIf { it > 0 }
+                    )
+                )
+            }
 
             AudioTags(
                 letras = buscarLetras(tag),
-                sampleRate = flac?.sampleRate
-                    ?: runCatching { header.sampleRateAsNumber }.getOrDefault(0),
-                bitRate = (flac?.bitRateBps
-                    ?: runCatching { header.bitRateAsNumber * 1000L }.getOrDefault(0L))
-                    .coerceIn(0L, Int.MAX_VALUE.toLong())
-                    .toInt(),
-                canales = flac?.canales
-                    ?: header.channels?.trim()?.toIntOrNull() ?: 0,
+                sampleRate = sampleRate,
+                bitRate = bitRate,
+                canales = channels,
                 duracionSegundos = flac?.duracionSegundos?.toInt()
                     ?: runCatching { header.trackLength }.getOrDefault(0),
-                bitsPorMuestra = flac?.bitsPorMuestra ?: 0,
+                bitsPorMuestra = bitsPerSample,
                 muestrasTotales = flac?.muestrasTotales ?: 0L,
                 exacto = flac != null,
                 todosLosCampos = tag.getFields().asSequence()

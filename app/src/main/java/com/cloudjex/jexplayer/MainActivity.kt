@@ -1,8 +1,10 @@
 package com.cloudjex.jexplayer
 
 import android.os.Bundle
+import android.graphics.Color as AndroidColor
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,6 +32,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cloudjex.jexplayer.ui.home.HomeScreen
@@ -37,6 +43,7 @@ import com.cloudjex.jexplayer.ui.home.WelcomeScreen
 import com.cloudjex.jexplayer.ui.home.SettingsScreen
 import com.cloudjex.jexplayer.ui.player.PlayerScreen
 import com.cloudjex.jexplayer.ui.theme.JexPlayerTheme
+import com.cloudjex.jexplayer.data.model.AppearanceTheme
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 
 class MainActivity : ComponentActivity() {
@@ -52,78 +59,93 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+        )
 
         setContent {
-            JexPlayerTheme {
-                val vm: MusicViewModel = viewModel()
-                viewModel = vm
-                val folders by vm.folders.collectAsState()
-                val restoredScreen by vm.showPlayer.collectAsState()
-                var settingsOpen by rememberSaveable { mutableStateOf(false) }
+            val vm: MusicViewModel = viewModel()
+            viewModel = vm
+            val selectedTheme by vm.selectedAppearanceTheme.collectAsState()
 
-                BackHandler(enabled = settingsOpen || restoredScreen == true) {
-                    if (settingsOpen) {
-                        settingsOpen = false
-                    } else {
-                        vm.setShowPlayer(false)
+            JexPlayerTheme(theme = selectedTheme ?: AppearanceTheme.default) {
+                if (selectedTheme == null) {
+                    ScreenLoading()
+                } else {
+                    val folders by vm.folders.collectAsState()
+                    val restoredScreen by vm.showPlayer.collectAsState()
+                    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+
+                    BackHandler(enabled = settingsOpen || restoredScreen == true) {
+                        if (settingsOpen) {
+                            settingsOpen = false
+                        } else {
+                            vm.setShowPlayer(false)
+                        }
                     }
-                }
 
-                val transitionOffsetPx = with(LocalDensity.current) { 20.dp.roundToPx() }
+                    val transitionOffsetPx = with(LocalDensity.current) { 20.dp.roundToPx() }
 
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Box(modifier = Modifier.padding(innerPadding)) {
-                        val screen = restoredScreen
-                        when {
-                            folders.isEmpty() -> {
-                                WelcomeScreen(onSelectFolders = { openFolderPicker() })
-                            }
-                            // Preferencia aún sin resolver: pantalla neutra, nunca
-                            // la biblioteca, para no parpadear antes del reproductor.
-                            screen == null -> ScreenLoading()
+                     Scaffold(
+                         modifier = Modifier.fillMaxSize(),
+                         // El NavigationBar consume el inset inferior. Aplicarlo también aquí
+                         // deja una zona vacía entre la barra de la app y la barra del sistema.
+                         contentWindowInsets = WindowInsets.safeDrawing.only(
+                             WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+                         )
+                     ) { innerPadding ->
+                        Box(modifier = Modifier.padding(innerPadding)) {
+                            val screen = restoredScreen
+                            when {
+                                folders.isEmpty() -> {
+                                    WelcomeScreen(onSelectFolders = { openFolderPicker() })
+                                }
+                                // La preferencia de pantalla pendiente no debe mostrar la biblioteca.
+                                screen == null -> ScreenLoading()
 
-                            else -> if (settingsOpen) {
-                                SettingsScreen(
-                                    viewModel = vm,
-                                    onBack = { settingsOpen = false },
-                                    onAddFolder = { openFolderPicker() }
-                                )
-                            } else AnimatedContent(
-                                targetState = screen,
-                                transitionSpec = {
-                                    if (targetState) {
-                                        (fadeIn(tween(600, easing = FastOutSlowInEasing)) +
-                                            slideInVertically(
-                                                tween(600, easing = FastOutSlowInEasing)
-                                            ) { transitionOffsetPx })
-                                            .togetherWith(
-                                                fadeOut(tween(600, easing = FastOutSlowInEasing))
-                                            )
+                                else -> if (settingsOpen) {
+                                    SettingsScreen(
+                                        viewModel = vm,
+                                        onBack = { settingsOpen = false },
+                                        onAddFolder = { openFolderPicker() }
+                                    )
+                                } else AnimatedContent(
+                                    targetState = screen,
+                                    transitionSpec = {
+                                        if (targetState) {
+                                            (fadeIn(tween(600, easing = FastOutSlowInEasing)) +
+                                                slideInVertically(
+                                                    tween(600, easing = FastOutSlowInEasing)
+                                                ) { transitionOffsetPx })
+                                                .togetherWith(
+                                                    fadeOut(tween(600, easing = FastOutSlowInEasing))
+                                                )
+                                        } else {
+                                            fadeIn(tween(600, easing = FastOutSlowInEasing))
+                                                .togetherWith(
+                                                    fadeOut(tween(600, easing = FastOutSlowInEasing)) +
+                                                        slideOutVertically(
+                                                            tween(600, easing = FastOutSlowInEasing)
+                                                        ) { transitionOffsetPx }
+                                                )
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxSize(),
+                                    label = "screenTransition"
+                                ) { playerOpen ->
+                                    if (playerOpen) {
+                                        PlayerScreen(
+                                            viewModel = vm,
+                                            onBack = { vm.setShowPlayer(false) }
+                                        )
                                     } else {
-                                        fadeIn(tween(600, easing = FastOutSlowInEasing))
-                                            .togetherWith(
-                                                fadeOut(tween(600, easing = FastOutSlowInEasing)) +
-                                                    slideOutVertically(
-                                                        tween(600, easing = FastOutSlowInEasing)
-                                                    ) { transitionOffsetPx }
-                                            )
+                                        HomeScreen(
+                                            viewModel = vm,
+                                            onOpenPlayer = { vm.setShowPlayer(true) },
+                                            onOpenSettings = { settingsOpen = true }
+                                        )
                                     }
-                                },
-                                modifier = Modifier.fillMaxSize(),
-                                label = "screenTransition"
-                            ) { playerOpen ->
-                                if (playerOpen) {
-                                    PlayerScreen(
-                                        viewModel = vm,
-                                        onBack = { vm.setShowPlayer(false) }
-                                    )
-                                } else {
-                                    HomeScreen(
-                                        viewModel = vm,
-                                        onOpenPlayer = { vm.setShowPlayer(true) },
-                                        onOpenSettings = { settingsOpen = true }
-                                    )
                                 }
                             }
                         }
