@@ -15,10 +15,14 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
+import com.cloudjex.jexplayer.data.local.AppearancePreferenceStore
 import com.cloudjex.jexplayer.data.local.LibraryCache
 import com.cloudjex.jexplayer.data.local.LastSongStore
 import com.cloudjex.jexplayer.data.local.ScreenPreferenceStore
 import com.cloudjex.jexplayer.data.model.AudioTags
+import com.cloudjex.jexplayer.data.model.AudioTechnicalInfo
+import com.cloudjex.jexplayer.data.model.SongAudioTechnicalInfo
+import com.cloudjex.jexplayer.data.model.AppearanceTheme
 import com.cloudjex.jexplayer.data.model.CachedSong
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
@@ -29,6 +33,7 @@ import com.cloudjex.jexplayer.playback.PlaybackService
 import com.cloudjex.jexplayer.ui.player.FlacInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +41,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 
 
 
@@ -60,12 +67,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val scanner = SafMusicScanner(appContext, albumArtStore)
     private val libraryCache = LibraryCache.from(appContext)
     private val screenPreferences = ScreenPreferenceStore.from(appContext)
+    private val appearancePreferences = AppearancePreferenceStore.from(appContext)
     private val lastSongStore = LastSongStore(appContext)
     private val restoredLastSong = lastSongStore.load()
     private var scanJob: Job? = null
     private var userChangedScreen = false
     private var audioTagsJob: Job? = null
+    @Volatile
     private var audioTagsRequestId = 0L
+    private var audioTagsRequestedSongId: String? = null
+    private val audioTechnicalInfoCache = ConcurrentHashMap<String, AudioTechnicalInfo>()
     private var playbackRestored = false
 
     private var cachedEntries: List<CachedSong> = emptyList()
@@ -85,7 +96,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val songId = mediaItem?.mediaId ?: return
             _currentSongId.value = songId
             _currentPosition.value = 0L
-            _audioTags.value = audioTagsCache[songId]
             (_songs.value.find { it.id == songId } ?: mediaItem?.toSongFallback())?.let { song ->
                 _restoredSong.value = song
                 lastSongStore.save(song, 0L)
@@ -153,6 +163,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _audioTagsLoadState = MutableStateFlow(AudioTagsLoadState.IDLE)
     val audioTagsLoadState: StateFlow<AudioTagsLoadState> = _audioTagsLoadState.asStateFlow()
 
+    private val _currentSongAudioTechnicalInfo = MutableStateFlow<SongAudioTechnicalInfo?>(null)
+    val currentSongAudioTechnicalInfo: StateFlow<SongAudioTechnicalInfo?> =
+        _currentSongAudioTechnicalInfo.asStateFlow()
+
     /**
      * `true` = reproductor, `false` = biblioteca, `null` = preferencia aún sin
      * resolver. La UI no dibuja ninguna de las dos pantallas hasta que deja de
@@ -160,6 +174,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
      */
     private val _showPlayer = MutableStateFlow<Boolean?>(null)
     val showPlayer: StateFlow<Boolean?> = _showPlayer.asStateFlow()
+
+    private val _selectedAppearanceTheme = MutableStateFlow<AppearanceTheme?>(null)
+    val selectedAppearanceTheme: StateFlow<AppearanceTheme?> =
+        _selectedAppearanceTheme.asStateFlow()
 
     /** Caché en memoria por canción para no releer el archivo en cada visita. */
     private val audioTagsCache = mutableMapOf<String, AudioTags?>()
@@ -197,6 +215,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val saved = screenPreferences.lastScreen.first()
             if (!userChangedScreen) {
                 _showPlayer.value = saved
+            }
+        }
+
+        viewModelScope.launch {
+            _selectedAppearanceTheme.value = try {
+                appearancePreferences.selectedTheme.first()
+            } catch (_: IOException) {
+                AppearanceTheme.default
             }
         }
     }
@@ -362,6 +388,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { screenPreferences.save(showPlayer) }
     }
 
+    /** Aplica el tema de inmediato y lo conserva para el siguiente inicio. */
+    fun setAppearanceTheme(theme: AppearanceTheme) {
+        if (_selectedAppearanceTheme.value == theme) return
+        _selectedAppearanceTheme.value = theme
+        viewModelScope.launch { appearancePreferences.saveTheme(theme) }
+    }
+
     private suspend fun updateLibrary(folders: List<Uri>) {
         if (folders.isEmpty()) {
             _songs.value = emptyList()
@@ -468,30 +501,98 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // `containsKey` y no `?.let`: una canción sin letras también queda
         // cacheada (con `null`) y no debe releerse del disco en cada visita.
         if (audioTagsCache.containsKey(song.id)) {
-            _audioTags.value = audioTagsCache[song.id]
+            if (audioTagsRequestedSongId != song.id) {
+                audioTagsRequestId++
+                audioTagsJob?.cancel()
+                audioTagsJob = null
+            }
+            audioTagsRequestedSongId = song.id
+            val tags = audioTagsCache[song.id]
+            _audioTags.value = tags
             _audioTagsLoadState.value = AudioTagsLoadState.LOADED
+            val technicalInfo = audioTechnicalInfoCache[song.id]
+                ?: tags?.let(AudioTechnicalInfo::from)
+            _currentSongAudioTechnicalInfo.value = technicalInfo?.let {
+                SongAudioTechnicalInfo(song.id, it)
+            }
+            return
+        }
+
+        // El listener del MediaController y playSong pueden notificar el mismo
+        // cambio. No cancelamos y empezamos de nuevo una lectura idéntica.
+        if (audioTagsRequestedSongId == song.id &&
+            _audioTagsLoadState.value == AudioTagsLoadState.LOADING
+        ) {
             return
         }
 
         val requestId = ++audioTagsRequestId
         audioTagsJob?.cancel()
+        audioTagsRequestedSongId = song.id
+        _audioTags.value = null
+        _audioTagsLoadState.value = AudioTagsLoadState.LOADING
+        _currentSongAudioTechnicalInfo.value = audioTechnicalInfoCache[song.id]?.let {
+            SongAudioTechnicalInfo(song.id, it)
+        }
+
         audioTagsJob = viewModelScope.launch {
-            _audioTags.value = null
-            _audioTagsLoadState.value = AudioTagsLoadState.LOADING
-            val tags = runCatching {
-                withContext(Dispatchers.IO) {
-                    FlacInfo.leerTags(appContext, song.uri)
+            try {
+                val quickInfo = withContext(Dispatchers.IO) {
+                    FlacInfo.leerInfoRapida(appContext, song.uri) { availableInfo ->
+                        publishAudioTechnicalInfo(song.id, requestId, availableInfo)
+                    }
                 }
-            }.getOrNull()
+                quickInfo?.let { publishAudioTechnicalInfo(song.id, requestId, it) }
 
-            if (requestId != audioTagsRequestId || _currentSongId.value != song.id) return@launch
+                val tags = withContext(Dispatchers.IO) {
+                    FlacInfo.leerTags(appContext, song.uri) { availableInfo ->
+                        publishAudioTechnicalInfo(song.id, requestId, availableInfo)
+                    }
+                }
 
-            if (tags != null) {
-                audioTagsCache[song.id] = tags
-                _audioTags.value = tags
-                _audioTagsLoadState.value = AudioTagsLoadState.LOADED
-            } else {
-                _audioTagsLoadState.value = AudioTagsLoadState.ERROR
+                if (!isCurrentAudioTagsRequest(song.id, requestId)) return@launch
+
+                if (tags != null) {
+                    audioTagsCache[song.id] = tags
+                    publishAudioTechnicalInfo(song.id, requestId, AudioTechnicalInfo.from(tags))
+                    _audioTags.value = tags
+                    _audioTagsLoadState.value = AudioTagsLoadState.LOADED
+                } else {
+                    _audioTagsLoadState.value = AudioTagsLoadState.ERROR
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                if (isCurrentAudioTagsRequest(song.id, requestId)) {
+                    _audioTagsLoadState.value = AudioTagsLoadState.ERROR
+                }
+            }
+        }
+    }
+
+    private fun isCurrentAudioTagsRequest(songId: String, requestId: Long): Boolean =
+        requestId == audioTagsRequestId && _currentSongId.value == songId
+
+    private fun publishAudioTechnicalInfo(
+        songId: String,
+        requestId: Long,
+        availableInfo: AudioTechnicalInfo
+    ) {
+        if (!availableInfo.hasValues || !isCurrentAudioTagsRequest(songId, requestId)) return
+
+        var mergedInfo: AudioTechnicalInfo? = null
+        audioTechnicalInfoCache.compute(songId) { _, cachedInfo ->
+            val visibleInfo = _currentSongAudioTechnicalInfo.value
+                ?.takeIf { it.songId == songId }
+                ?.info
+            (visibleInfo ?: cachedInfo ?: AudioTechnicalInfo())
+                .merge(availableInfo)
+                .also { mergedInfo = it }
+        }
+
+        if (isCurrentAudioTagsRequest(songId, requestId)) {
+            mergedInfo?.let { info ->
+                _currentSongAudioTechnicalInfo.value = SongAudioTechnicalInfo(songId, info)
             }
         }
     }

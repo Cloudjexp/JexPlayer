@@ -1,15 +1,19 @@
 package com.cloudjex.jexplayer.ui.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -18,6 +22,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,12 +34,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.cloudjex.jexplayer.data.model.AppearanceTheme
 import com.cloudjex.jexplayer.data.model.MusicFolder
+import com.cloudjex.jexplayer.ui.icons.JexSymbol
+import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
+import com.cloudjex.jexplayer.ui.theme.paletteFor
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 
 @Composable
@@ -47,6 +57,7 @@ fun SettingsScreen(
     val revokedFolders by viewModel.revokedFolderUris.collectAsState()
     val message by viewModel.folderMessage.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
+    val selectedTheme by viewModel.selectedAppearanceTheme.collectAsState()
     var folderToRemove by remember { mutableStateOf<MusicFolder?>(null) }
     val context = LocalContext.current
     val versionName = remember {
@@ -83,14 +94,23 @@ fun SettingsScreen(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
-                Text("‹", style = MaterialTheme.typography.headlineMedium)
+                JexSymbolIcon(
+                    symbol = JexSymbol.ArrowBack,
+                    contentDescription = "Volver a la biblioteca",
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
             }
             Column {
                 Text(
-                    text = "AJUSTES",
+                    text = "Ajustes",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = 2.sp
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Personaliza tu experiencia",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -143,13 +163,19 @@ fun SettingsScreen(
         Spacer(Modifier.height(18.dp))
         SettingsSectionTitle("Apariencia")
         SettingsCard {
-            Text("Tema oscuro", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "JexPlayer utiliza actualmente su paleta dark editorial.",
+                "Elige una paleta oscura. El cambio se aplica al instante.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(bottom = 12.dp)
             )
+            AppearanceTheme.entries.forEach { theme ->
+                AppearanceThemeOption(
+                    theme = theme,
+                    selected = selectedTheme == theme,
+                    onSelect = { viewModel.setAppearanceTheme(theme) }
+                )
+            }
         }
 
         Spacer(Modifier.height(18.dp))
@@ -178,8 +204,13 @@ fun SettingsScreen(
 
 @Composable
 private fun SettingsSectionTitle(title: String) {
-    Column(modifier = Modifier.padding(bottom = 8.dp)) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    Column(modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary
+        )
     }
 }
 
@@ -188,6 +219,7 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 1.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp), content = content)
@@ -195,14 +227,86 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
+private fun AppearanceThemeOption(
+    theme: AppearanceTheme,
+    selected: Boolean,
+    onSelect: () -> Unit
+) {
+    val palette = paletteFor(theme)
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect),
+        shape = MaterialTheme.shapes.medium,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceContainerLow,
+        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier.size(24.dp),
+                shape = CircleShape,
+                color = palette.primary,
+                content = {}
+            )
+            Text(
+                text = theme.label,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp)
+            )
+            RadioButton(selected = selected, onClick = null)
+        }
+    }
+}
+
+@Composable
 private fun FolderSettingRow(folder: MusicFolder, isRevoked: Boolean, onRemove: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Surface(
+            modifier = Modifier.size(40.dp),
+            shape = MaterialTheme.shapes.small,
+            color = if (isRevoked) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.secondaryContainer
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                JexSymbolIcon(
+                    symbol = JexSymbol.Folder,
+                    contentDescription = null,
+                    tint = if (isRevoked) MaterialTheme.colorScheme.onErrorContainer
+                    else MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(21.dp)
+                )
+            }
+        }
         Column(modifier = Modifier.weight(1f)) {
-            Text(folder.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (isRevoked) Text("Permiso revocado", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            Text(
+                folder.name,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp),
+                fontWeight = FontWeight.Medium
+            )
+            if (isRevoked) {
+                Text(
+                    "Permiso revocado",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(start = 12.dp)
+                )
+            }
         }
         TextButton(onClick = onRemove) { Text("Quitar") }
     }

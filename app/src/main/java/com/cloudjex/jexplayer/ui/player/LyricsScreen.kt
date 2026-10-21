@@ -12,16 +12,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -32,7 +31,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.cloudjex.jexplayer.data.model.AudioTags
 import com.cloudjex.jexplayer.data.model.Song
-import com.cloudjex.jexplayer.ui.icons.JexArrowBackIcon
+import com.cloudjex.jexplayer.ui.icons.JexSymbol
+import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.AudioTagsLoadState
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -153,12 +153,12 @@ fun LyricsScreen(
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.8f))
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.82f))
         ) {
             IconButton(onClick = onClose) {
-                Icon(
-                    imageVector = JexArrowBackIcon,
-                    contentDescription = "Regresar a la biblioteca"
+                JexSymbolIcon(
+                    symbol = JexSymbol.ArrowBack,
+                    contentDescription = "Cerrar letras"
                 )
             }
         }
@@ -238,7 +238,8 @@ fun LyricsScreen(
                     )
 
                     val colorAnimado by animateColorAsState(
-                        targetValue = if (esLaSeleccionada) Color.White else Color.White.copy(alpha = 0.5f),
+                        targetValue = if (esLaSeleccionada) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
                         animationSpec = tween(durationMillis = 300),
                         label = "ColorAnimation"
                     )

@@ -2,7 +2,6 @@ package com.cloudjex.jexplayer.ui.player
 
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -13,20 +12,20 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -44,39 +43,35 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.painter.ColorPainter
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import coil3.compose.AsyncImage
 import com.cloudjex.jexplayer.data.model.Song
-import com.cloudjex.jexplayer.ui.theme.JexPrimary
-import com.cloudjex.jexplayer.ui.theme.JexProgress
-import com.cloudjex.jexplayer.ui.theme.JexRedSecondary
+import com.cloudjex.jexplayer.data.model.AudioTechnicalInfo
+import com.cloudjex.jexplayer.data.model.displayValues
+import com.cloudjex.jexplayer.data.model.forSong
+import com.cloudjex.jexplayer.ui.icons.JexSymbol
+import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import kotlin.math.PI
 import kotlin.math.sin
-import com.cloudjex.jexplayer.ui.icons.JexArrowBackIcon
-import com.cloudjex.jexplayer.ui.icons.JexMusicIcon
-import com.cloudjex.jexplayer.ui.icons.JexLyricsIcon
 import com.cloudjex.jexplayer.viewmodel.AudioTagsLoadState
-import com.cloudjex.jexplayer.ui.icons.JexRepeatIcon
-import com.cloudjex.jexplayer.ui.icons.JexShuffleIcon
-import com.cloudjex.jexplayer.ui.icons.JexPlayIcon
-import com.cloudjex.jexplayer.ui.icons.JexRepeatOneIcon
-import com.cloudjex.jexplayer.ui.icons.JexSkipNextIcon
-import com.cloudjex.jexplayer.ui.icons.JexSkipPreviousIcon
-import com.cloudjex.jexplayer.ui.icons.JexPauseIcon
 
 @Composable
 fun PlayerScreen(
@@ -93,6 +88,7 @@ fun PlayerScreen(
     val duration by viewModel.duration.collectAsState()
     val audioTags by viewModel.audioTags.collectAsState()
     val audioTagsLoadState by viewModel.audioTagsLoadState.collectAsState()
+    val currentSongAudioTechnicalInfo by viewModel.currentSongAudioTechnicalInfo.collectAsState()
 
     val currentSong = songs.find { it.id == currentSongId }
         ?: restoredSong?.takeIf { it.id == currentSongId }
@@ -104,6 +100,7 @@ fun PlayerScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .navigationBarsPadding()
                 .background(MaterialTheme.colorScheme.background)
         ) {
             PlayerTopBar(onBack = onBack)
@@ -115,6 +112,11 @@ fun PlayerScreen(
                         .fillMaxWidth()
                 )
             } else {
+                val technicalInfo = currentSongAudioTechnicalInfo.forSong(currentSong.id)
+                    ?: audioTags.takeIf {
+                        audioTagsLoadState == AudioTagsLoadState.LOADED
+                    }?.let(AudioTechnicalInfo::from)
+
                 PlayerContent(
                     modifier = Modifier
                         .weight(1f)
@@ -125,6 +127,7 @@ fun PlayerScreen(
                     repeatMode = repeatMode,
                     currentPosition = currentPosition,
                     duration = duration,
+                    audioTechnicalInfo = technicalInfo,
                     onPrevious = { viewModel.previousSong() },
                     onPlayPause = { viewModel.togglePlayPause() },
                     onNext = { viewModel.nextSong() },
@@ -141,7 +144,9 @@ fun PlayerScreen(
             LyricsScreen(
                 onSeek = { viewModel.seekTo(it) },
                 song = currentSong,
-                tags = audioTags,
+                tags = audioTags.takeIf {
+                    audioTagsLoadState == AudioTagsLoadState.LOADED
+                },
                 tagsLoadState = audioTagsLoadState,
                 onClose = { showLyrics = false })
 
@@ -158,8 +163,8 @@ private fun PlayerTopBar(onBack: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onBack) {
-            Icon(
-                imageVector = JexArrowBackIcon,
+            JexSymbolIcon(
+                symbol = JexSymbol.ArrowBack,
                 contentDescription = "Volver a la biblioteca",
                 tint = MaterialTheme.colorScheme.onBackground
             )
@@ -188,6 +193,7 @@ private fun PlayerContent(
     repeatMode: RepeatMode,
     currentPosition: Long,
     duration: Long,
+    audioTechnicalInfo: AudioTechnicalInfo?,
     onPrevious: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
@@ -196,98 +202,135 @@ private fun PlayerContent(
     onSeek: (Long) -> Unit,
     onArtworkClick: () -> Unit // <-- Añadido parámetro de evento click
 ) {
-    Column(
-        modifier = modifier
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        PlayerArtwork(song = song, onClick = onArtworkClick) // <-- Pasamos la función aquí
+    BoxWithConstraints(modifier = modifier) {
+        val artworkSize = minOf(maxWidth, maxHeight * 0.46f)
 
         Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(
-                text = song.title,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+            PlayerArtwork(
+                song = song,
+                size = artworkSize,
+                onClick = onArtworkClick,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = song.artist,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (song.album.isNotBlank()) {
-                Text(
-                    text = song.album,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = song.title,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = song.artist.ifBlank { "Artista desconocido" },
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(20.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (song.album.isNotBlank()) {
+                        Text(
+                            text = song.album,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
             }
+
+            InteractiveWaveform(
+                isPlaying = isPlaying,
+                currentPosition = currentPosition,
+                duration = duration,
+                onSeek = onSeek
+            )
+
+            TechnicalAudioInfo(info = audioTechnicalInfo)
+
+            PlayerControls(
+                isPlaying = isPlaying,
+                isShuffleEnabled = isShuffleEnabled,
+                repeatMode = repeatMode,
+                onPrevious = onPrevious,
+                onPlayPause = onPlayPause,
+                onNext = onNext,
+                onShuffle = onShuffle,
+                onRepeat = onRepeat
+            )
         }
-
-        AudioVisualizer(isPlaying = isPlaying)
-
-        PlayerProgress(
-            currentPosition = currentPosition,
-            duration = duration,
-            onSeek = onSeek
-        )
-
-        PlayerControls(
-            isPlaying = isPlaying,
-            isShuffleEnabled = isShuffleEnabled,
-            repeatMode = repeatMode,
-            onPrevious = onPrevious,
-            onPlayPause = onPlayPause,
-            onNext = onNext,
-            onShuffle = onShuffle,
-            onRepeat = onRepeat
-        )
     }
 }
 
 @Composable
-private fun PlayerArtwork(song: Song, onClick: () -> Unit) {
+private fun PlayerArtwork(
+    song: Song,
+    size: androidx.compose.ui.unit.Dp,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     val placeholderPainter = ColorPainter(MaterialTheme.colorScheme.secondaryContainer)
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1f)
-            .clip(RoundedCornerShape(20.dp))
+        modifier = modifier
+            .size(size)
+            .clip(RoundedCornerShape(28.dp))
             .clickable { onClick() }
     ) {
         AsyncImage(
             model = song.albumArtUri,
             contentDescription = song.album,
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f)
-                .clip(RoundedCornerShape(20.dp)),
+            modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
             placeholder = placeholderPainter,
             error = placeholderPainter,
             fallback = placeholderPainter
         )
-        Icon(
-            imageVector = JexLyricsIcon,
+        JexSymbolIcon(
+            symbol = JexSymbol.Lyrics,
             contentDescription = "Letras de canciones",
-            tint = Color.White,
+            tint = MaterialTheme.colorScheme.onPrimary,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
+                .padding(12.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f))
                 .padding(8.dp)
                 .size(24.dp)
         )
@@ -295,37 +338,42 @@ private fun PlayerArtwork(song: Song, onClick: () -> Unit) {
 }
 
 @Composable
-private fun PlayerProgress(
+private fun InteractiveWaveform(
+    isPlaying: Boolean,
     currentPosition: Long,
     duration: Long,
     onSeek: (Long) -> Unit
 ) {
-    var isDragging by remember { mutableStateOf(false) }
-    var draggedPosition by remember { mutableStateOf(0f) }
-
+    val transition = rememberInfiniteTransition(label = "waveform")
+    val animationPhase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2 * PI).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2400, easing = LinearEasing)
+        ),
+        label = "waveformPhase"
+    )
     val sliderMax = duration.coerceAtLeast(1L).toFloat()
-    val sliderValue = if (isDragging) {
-        draggedPosition.coerceIn(0f, sliderMax)
-    } else {
-        currentPosition.toFloat().coerceIn(0f, sliderMax)
+    var isDragging by remember { mutableStateOf(false) }
+    var draggedFraction by remember { mutableStateOf(0f) }
+    val progress = if (isDragging) draggedFraction else {
+        currentPosition.toFloat().div(sliderMax).coerceIn(0f, 1f)
     }
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = formatDuration(sliderValue.toLong()),
-            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.4.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+    val playedBrush = Brush.horizontalGradient(
+        colors = listOf(MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.primary)
+    )
+    val inactiveBrush = Brush.horizontalGradient(
+        colors = listOf(
+            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.32f),
+            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.32f)
         )
+    )
 
-        Box(
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Canvas(
             modifier = Modifier
-                .weight(1f)
-                // La zona táctil es amplia aunque la línea sea deliberadamente fina.
-                .height(28.dp)
-                .padding(horizontal = 6.dp)
+                .fillMaxWidth()
+                .height(44.dp)
                 .pointerInput(sliderMax) {
                     detectTapGestures { offset ->
                         val fraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
@@ -336,52 +384,113 @@ private fun PlayerProgress(
                     detectDragGestures(
                         onDragStart = { offset ->
                             isDragging = true
-                            val fraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
-                            draggedPosition = fraction * sliderMax
+                            draggedFraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
                         },
                         onDrag = { change, _ ->
                             change.consume()
-                            val fraction =
+                            draggedFraction =
                                 (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
-                            draggedPosition = fraction * sliderMax
                         },
                         onDragEnd = {
-                            onSeek(draggedPosition.toLong())
+                            onSeek((draggedFraction * sliderMax).toLong())
                             isDragging = false
-                        }
+                        },
+                        onDragCancel = { isDragging = false }
                     )
                 }
+                .semantics {
+                    contentDescription = "Visualización estilizada de reproducción"
+                    stateDescription = formatDuration((progress * sliderMax).toLong())
+                    progressBarRangeInfo = ProgressBarRangeInfo(progress, 0f..1f)
+                    setProgress { targetProgress ->
+                        onSeek((targetProgress.coerceIn(0f, 1f) * sliderMax).toLong())
+                        true
+                    }
+                }
         ) {
-            val trackColor = MaterialTheme.colorScheme.outlineVariant
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val centerY = size.height / 2f
-                val progressX = size.width * (sliderValue / sliderMax)
+            val slot = 9.dp.toPx()
+            val count = (size.width / slot).toInt().coerceIn(18, 64)
+            val step = size.width / count
+            val baseBarWidth = (step * 0.42f).coerceAtLeast(2.dp.toPx())
+            val motion = if (isPlaying) 1f else 0.2f
 
-                drawLine(
-                    color = trackColor,
-                    start = Offset(0f, centerY),
-                    end = Offset(size.width, centerY),
-                    strokeWidth = 1.dp.toPx()
-                )
-                drawLine(
-                    color = JexProgress,
-                    start = Offset(0f, centerY),
-                    end = Offset(progressX, centerY),
-                    strokeWidth = 1.5.dp.toPx()
-                )
-                drawCircle(
-                    color = JexProgress,
-                    radius = 3.dp.toPx(),
-                    center = Offset(progressX, centerY)
-                )
+            for (index in 0 until count) {
+                val n = index.toFloat()
+                val wave = sin(n * 0.61f + 0.7f) * 0.45f +
+                    sin(n * 1.17f + 2.1f) * 0.3f +
+                    sin(n * 0.29f + 0.4f) * 0.25f
+                val pulse = if (isPlaying) sin(animationPhase + n * 0.13f) * 0.08f else 0f
+                val heightFraction = (0.2f + (wave + 1f) * 0.29f * motion + pulse)
+                    .coerceIn(0.14f, 0.9f)
+                val barHeight = size.height * heightFraction
+                val left = index * step + (step - baseBarWidth) / 2f
+                val played = (index + 0.5f) / count <= progress
+
+                val topLeft = Offset(left, (size.height - barHeight) / 2f)
+                val barSize = Size(baseBarWidth, barHeight)
+                val cornerRadius = CornerRadius(baseBarWidth / 2f, baseBarWidth / 2f)
+                if (played) {
+                    drawRoundRect(playedBrush, topLeft, barSize, cornerRadius)
+                } else {
+                    drawRoundRect(inactiveBrush, topLeft, barSize, cornerRadius)
+                }
             }
         }
 
-        Text(
-            text = formatDuration(duration),
-            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.4.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(
+                text = formatDuration((progress * sliderMax).toLong()),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = formatDuration(duration),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun TechnicalAudioInfo(info: AudioTechnicalInfo?) {
+    val details = info?.displayValues().orEmpty()
+    val line = details.joinToString(" | ")
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (line.isNotEmpty()) {
+            val style = MaterialTheme.typography.bodySmall.copy(
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium
+            )
+            val textMeasurer = rememberTextMeasurer()
+            val density = LocalDensity.current
+            val availableWidthPx = with(density) { maxWidth.toPx() }
+            val measuredWidthPx = textMeasurer.measure(
+                text = AnnotatedString(line),
+                style = style,
+                maxLines = 1,
+                softWrap = false
+            ).size.width.toFloat().coerceAtLeast(1f)
+            val scale = (availableWidthPx / measuredWidthPx).coerceAtMost(1f)
+            val adjustedStyle = style.copy(
+                fontSize = (style.fontSize.value * scale).coerceAtLeast(9f).sp
+            )
+
+            Text(
+                text = line,
+                modifier = Modifier.fillMaxWidth(),
+                style = adjustedStyle,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
     }
 }
 
@@ -402,8 +511,8 @@ private fun PlayerControls(
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onShuffle) {
-            Icon(
-                imageVector = JexShuffleIcon,
+            JexSymbolIcon(
+                symbol = JexSymbol.Shuffle,
                 contentDescription = "Aleatorio",
                 tint = if (isShuffleEnabled) {
                     MaterialTheme.colorScheme.primary
@@ -415,8 +524,8 @@ private fun PlayerControls(
         }
 
         IconButton(onClick = onPrevious) {
-            Icon(
-                imageVector = JexSkipPreviousIcon,
+            JexSymbolIcon(
+                symbol = JexSymbol.SkipPrevious,
                 contentDescription = "Anterior",
                 tint = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.size(34.dp)
@@ -431,8 +540,8 @@ private fun PlayerControls(
                 .clickable(onClick = onPlayPause),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = if (isPlaying) JexPauseIcon else JexPlayIcon,
+            JexSymbolIcon(
+                symbol = if (isPlaying) JexSymbol.Pause else JexSymbol.PlayArrow,
                 contentDescription = if (isPlaying) "Pausar" else "Reproducir",
                 tint = MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier.size(28.dp)
@@ -440,8 +549,8 @@ private fun PlayerControls(
         }
 
         IconButton(onClick = onNext) {
-            Icon(
-                imageVector = JexSkipNextIcon,
+            JexSymbolIcon(
+                symbol = JexSymbol.SkipNext,
                 contentDescription = "Siguiente",
                 tint = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.size(34.dp)
@@ -449,11 +558,11 @@ private fun PlayerControls(
         }
 
         IconButton(onClick = onRepeat) {
-            Icon(
-                imageVector = if (repeatMode == RepeatMode.ONE) {
-                    JexRepeatOneIcon
+            JexSymbolIcon(
+                symbol = if (repeatMode == RepeatMode.ONE) {
+                    JexSymbol.RepeatOne
                 } else {
-                    JexRepeatIcon
+                    JexSymbol.Repeat
                 },
                 contentDescription = "Repetición",
                 tint = if (repeatMode == RepeatMode.OFF) {
@@ -468,83 +577,14 @@ private fun PlayerControls(
 }
 
 @Composable
-private fun AudioVisualizer(
-    isPlaying: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val transition = rememberInfiniteTransition(label = "visualizer")
-    val progress by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2600, easing = LinearEasing)
-        ),
-        label = "progress"
-    )
-
-    val amplitude by animateFloatAsState(
-        targetValue = if (isPlaying) 1f else 0.16f,
-        animationSpec = tween(durationMillis = 700),
-        label = "amplitude"
-    )
-
-    Canvas(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(32.dp)
-    ) {
-        val slot = 10.dp.toPx()
-        val count = (size.width / slot).toInt().coerceIn(12, 38)
-        val step = size.width / count
-        val baseBarWidth = (step * 0.34f).coerceAtLeast(1.5.dp.toPx())
-        val minFraction = 0.12f
-        val maxFraction = 0.88f
-        val fullTurn = (2 * PI).toFloat()
-
-        val brush = Brush.horizontalGradient(
-            colors = listOf(JexRedSecondary, JexPrimary, JexRedSecondary)
-        )
-
-        for (index in 0 until count) {
-            val n = index.toFloat()
-
-            // Variación determinista para evitar un patrón de ecualizador uniforme.
-            val barWidth = (baseBarWidth * (0.72f + 0.42f *
-                    (sin(n * 0.73f + 1.2f) * 0.5f + 0.5f)))
-                .coerceAtLeast(1.5.dp.toPx())
-            val radius = barWidth / 2f
-
-            val wave = sin(fullTurn * progress + n * 0.55f) * 0.5f +
-                    sin(fullTurn * 2f * progress + n * 1.15f + 0.8f) * 0.3f +
-                    sin(fullTurn * 3f * progress + n * 0.35f + 2.1f) * 0.2f
-            val dynamic = ((wave + 1f) * 0.5f).coerceIn(0f, 1f)
-
-            val organicHeight = 0.78f + 0.22f * (sin(n * 0.37f + 0.9f) * 0.5f + 0.5f)
-            val fraction = minFraction + dynamic * amplitude * organicHeight *
-                    (maxFraction - minFraction)
-            val barHeight = fraction * size.height
-            val left = index * step + (step - barWidth) / 2f
-            val top = size.height - barHeight
-
-            drawRoundRect(
-                brush = brush,
-                topLeft = Offset(left, top),
-                size = Size(barWidth, barHeight),
-                cornerRadius = CornerRadius(radius, radius)
-            )
-        }
-    }
-}
-
-@Composable
 private fun PlayerEmptyState(modifier: Modifier) {
     Box(
         modifier = modifier.padding(32.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = JexMusicIcon,
+            JexSymbolIcon(
+                symbol = JexSymbol.MusicNote,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(48.dp)
