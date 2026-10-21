@@ -44,6 +44,14 @@ enum class RepeatMode {
     ALL,
     ONE
 }
+
+enum class AudioTagsLoadState {
+    IDLE,
+    LOADING,
+    LOADED,
+    ERROR
+}
+
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appContext = application.applicationContext
@@ -57,6 +65,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var scanJob: Job? = null
     private var userChangedScreen = false
     private var audioTagsJob: Job? = null
+    private var audioTagsRequestId = 0L
+    private var playbackRestored = false
 
     private var cachedEntries: List<CachedSong> = emptyList()
     private var cacheLoaded = false
@@ -140,6 +150,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _audioTags = MutableStateFlow<AudioTags?>(null)
     val audioTags: StateFlow<AudioTags?> = _audioTags.asStateFlow()
 
+    private val _audioTagsLoadState = MutableStateFlow(AudioTagsLoadState.IDLE)
+    val audioTagsLoadState: StateFlow<AudioTagsLoadState> = _audioTagsLoadState.asStateFlow()
+
     /**
      * `true` = reproductor, `false` = biblioteca, `null` = preferencia aún sin
      * resolver. La UI no dibuja ninguna de las dos pantallas hasta que deja de
@@ -164,6 +177,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 // reproduciendo tras cerrar la Activity), los Player.Listener no
                 // reciben el estado actual. Lo leemos una vez de forma explícita.
                 syncStateFromController(connected)
+                restorePlaybackIfNeeded(connected)
 
                 pendingAction?.let { action ->
                     action(connected)
@@ -175,6 +189,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         startProgressTracking()
         reloadLibrary()
+        restoredLastSong?.song?.let(::cargarAudioTags)
 
         // Se resuelve la preferencia antes de que la UI dibuje Home o Player;
         // hasta entonces `showPlayer` es `null` y no se muestra ninguna pantalla.
@@ -194,12 +209,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun syncStateFromController(controller: MediaController) {
         controller.currentMediaItem?.mediaId?.let { songId ->
+            playbackRestored = true
             _currentSongId.value = songId
             (_songs.value.find { it.id == songId }
                 ?: controller.currentMediaItem?.toSongFallback())?.let { song ->
                 _restoredSong.value = song
                 lastSongStore.save(song, controller.currentPosition)
                 _duration.value = song.duration
+                cargarAudioTags(song)
             }
         }
 
@@ -215,6 +232,47 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             Player.REPEAT_MODE_ONE -> RepeatMode.ONE
             else -> RepeatMode.OFF
         }
+    }
+
+    /** Prepara la última canción guardada sin iniciar la reproducción. */
+    private fun restorePlaybackIfNeeded(controller: MediaController) {
+        if (playbackRestored) return
+
+        val saved = restoredLastSong ?: return
+        val songs = _songs.value
+        if (songs.isEmpty()) return
+
+        val targetIndex = findMediaIdIndex(songs.map { it.id }, saved.song.id)
+        if (targetIndex == -1) return
+
+        val queueIsValid = controllerHasQueue(controller, songs)
+        val queueIndex = if (queueIsValid) {
+            findMediaIdIndex(
+                (0 until controller.mediaItemCount).map { controller.getMediaItemAt(it).mediaId },
+                saved.song.id
+            )
+        } else {
+            -1
+        }
+
+        if (queueIndex >= 0) {
+            controller.seekTo(queueIndex, saved.position)
+            controller.prepare()
+        } else {
+            controller.setMediaItems(songs.map { it.toMediaItem() }, targetIndex, saved.position)
+            controller.shuffleModeEnabled = _isShuffleEnabled.value
+            controller.prepare()
+        }
+
+        controller.playWhenReady = false
+        controller.pause()
+        playbackRestored = true
+        _currentSongId.value = saved.song.id
+        _restoredSong.value = songs[targetIndex]
+        _currentPosition.value = saved.position
+        _duration.value = songs[targetIndex].duration
+        lastSongStore.save(songs[targetIndex], saved.position)
+        cargarAudioTags(songs[targetIndex])
     }
 
     fun onFolderSelected(uri: Uri?) {
@@ -340,12 +398,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val resolved = _songs.value.find { it.id == restoredId }
             if (resolved != null) {
                 _restoredSong.value = resolved
+                cargarAudioTags(resolved)
             } else if (controller?.currentMediaItem == null) {
                 _currentSongId.value = null
                 _restoredSong.value = null
                 lastSongStore.clear()
             }
         }
+
+        controller?.let { restorePlaybackIfNeeded(it) }
 
         if (merged != cachedEntries) {
             cachedEntries = merged
@@ -408,17 +469,30 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // cacheada (con `null`) y no debe releerse del disco en cada visita.
         if (audioTagsCache.containsKey(song.id)) {
             _audioTags.value = audioTagsCache[song.id]
+            _audioTagsLoadState.value = AudioTagsLoadState.LOADED
             return
         }
 
+        val requestId = ++audioTagsRequestId
         audioTagsJob?.cancel()
         audioTagsJob = viewModelScope.launch {
             _audioTags.value = null
-            val tags = withContext(Dispatchers.IO) {
-                FlacInfo.leerTags(appContext, song.uri)
+            _audioTagsLoadState.value = AudioTagsLoadState.LOADING
+            val tags = runCatching {
+                withContext(Dispatchers.IO) {
+                    FlacInfo.leerTags(appContext, song.uri)
+                }
+            }.getOrNull()
+
+            if (requestId != audioTagsRequestId || _currentSongId.value != song.id) return@launch
+
+            if (tags != null) {
+                audioTagsCache[song.id] = tags
+                _audioTags.value = tags
+                _audioTagsLoadState.value = AudioTagsLoadState.LOADED
+            } else {
+                _audioTagsLoadState.value = AudioTagsLoadState.ERROR
             }
-            audioTagsCache[song.id] = tags
-            _audioTags.value = tags
         }
     }
 
@@ -428,6 +502,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _currentPosition.value = 0L
         _duration.value = song.duration
         lastSongStore.save(song, 0L)
+        playbackRestored = true
+        cargarAudioTags(song)
 
         runOnController { controller ->
             val songs = _songs.value

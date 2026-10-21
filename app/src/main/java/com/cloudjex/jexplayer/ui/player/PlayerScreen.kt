@@ -69,6 +69,7 @@ import kotlin.math.sin
 import com.cloudjex.jexplayer.ui.icons.JexArrowBackIcon
 import com.cloudjex.jexplayer.ui.icons.JexMusicIcon
 import com.cloudjex.jexplayer.ui.icons.JexLyricsIcon
+import com.cloudjex.jexplayer.viewmodel.AudioTagsLoadState
 import com.cloudjex.jexplayer.ui.icons.JexRepeatIcon
 import com.cloudjex.jexplayer.ui.icons.JexShuffleIcon
 import com.cloudjex.jexplayer.ui.icons.JexPlayIcon
@@ -91,6 +92,7 @@ fun PlayerScreen(
     val currentPosition by viewModel.currentPosition.collectAsState()
     val duration by viewModel.duration.collectAsState()
     val audioTags by viewModel.audioTags.collectAsState()
+    val audioTagsLoadState by viewModel.audioTagsLoadState.collectAsState()
 
     val currentSong = songs.find { it.id == currentSongId }
         ?: restoredSong?.takeIf { it.id == currentSongId }
@@ -140,6 +142,7 @@ fun PlayerScreen(
                 onSeek = { viewModel.seekTo(it) },
                 song = currentSong,
                 tags = audioTags,
+                tagsLoadState = audioTagsLoadState,
                 onClose = { showLyrics = false })
 
         }

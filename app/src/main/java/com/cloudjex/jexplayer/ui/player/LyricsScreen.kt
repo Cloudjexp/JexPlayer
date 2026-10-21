@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -33,6 +34,7 @@ import com.cloudjex.jexplayer.data.model.AudioTags
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.ui.icons.JexArrowBackIcon
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
+import com.cloudjex.jexplayer.viewmodel.AudioTagsLoadState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
@@ -128,9 +130,10 @@ fun LyricsScreen(
     onSeek: (Long) -> Unit,
     song: Song,
     tags: AudioTags?,
+    tagsLoadState: AudioTagsLoadState,
     onClose: () -> Unit
 ) {
-    val letras = tags?.letras ?: "Sin letras"
+    val letras = tags?.letras.orEmpty()
     val listaSincronizada = remember(letras) { obtenerListaSincronizada(letras) }
 
     // 1. Estado para controlar el scroll del LazyColumn
@@ -206,7 +209,21 @@ fun LyricsScreen(
             }
         }
 
-        if (listaSincronizada.isNotEmpty()) {
+        when {
+            tagsLoadState == AudioTagsLoadState.LOADING ||
+                tagsLoadState == AudioTagsLoadState.IDLE -> {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+            tagsLoadState == AudioTagsLoadState.ERROR -> {
+                Text(
+                    text = "No se pudieron leer las letras",
+                    fontWeight = FontWeight.Black,
+                    fontStyle = FontStyle.Italic,
+                    fontSize = 24.sp,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+            listaSincronizada.isNotEmpty() -> {
             LazyColumn(
                 state = listState, // 3. esto es para controlar el auto scroll
                 modifier = Modifier.padding(top = 38.dp, start = 40.dp, end = 40.dp)
@@ -248,7 +265,8 @@ fun LyricsScreen(
                     )
                 }
             }
-        } else {
+            }
+            else -> {
             Text(
                 fontWeight = FontWeight.Black,
                 fontStyle = FontStyle.Italic,
@@ -256,6 +274,7 @@ fun LyricsScreen(
                 text = "Sin Letra",
                 modifier = Modifier.align(Alignment.Center)
             )
+            }
         }
     }
 }
