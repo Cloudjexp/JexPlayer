@@ -27,8 +27,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.cloudjex.jexplayer.data.local.LibraryScrollPosition
+import com.cloudjex.jexplayer.data.local.LibraryScrollPositionStore
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -46,6 +58,7 @@ import com.cloudjex.jexplayer.ui.theme.JexPlayerTheme
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 
+@OptIn(FlowPreview::class)
 class MainActivity : ComponentActivity() {
 
     private val folderPickerLauncher = registerForActivityResult(
@@ -74,8 +87,77 @@ class MainActivity : ComponentActivity() {
                     ScreenLoading()
                 } else {
                     val folders by vm.folders.collectAsState()
-                    val restoredScreen by vm.showPlayer.collectAsState()
-                    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+                     val restoredScreen by vm.showPlayer.collectAsState()
+                     val currentSongId by vm.currentSongId.collectAsState()
+                     val songs by vm.songs.collectAsState()
+                     val libraryScrollStore = remember {
+                         LibraryScrollPositionStore(applicationContext)
+                     }
+                     val savedLibraryPosition = remember { libraryScrollStore.load() }
+                     val libraryListState = rememberLazyListState(
+                         initialFirstVisibleItemIndex = savedLibraryPosition.firstVisibleItemIndex,
+                         initialFirstVisibleItemScrollOffset =
+                             savedLibraryPosition.firstVisibleItemScrollOffset
+                     )
+                     var pendingLibraryFollowId by remember { mutableStateOf<String?>(null) }
+                     var lastObservedSongId by remember { mutableStateOf(currentSongId) }
+                     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+
+                     // Se escribe solo cuando la posición se estabiliza. La lista puede
+                     // estar desmontada al abrir el reproductor, pero su estado sigue
+                     // viviendo en esta composición.
+                     LaunchedEffect(libraryListState, songs.size) {
+                         if (songs.isEmpty()) return@LaunchedEffect
+
+                         snapshotFlow {
+                             LibraryScrollPosition(
+                                 firstVisibleItemIndex = libraryListState.firstVisibleItemIndex,
+                                 firstVisibleItemScrollOffset =
+                                     libraryListState.firstVisibleItemScrollOffset
+                             )
+                         }
+                             .distinctUntilChanged()
+                             .debounce(400)
+                             .collect { position ->
+                                 libraryScrollStore.save(
+                                     position.copy(
+                                         firstVisibleItemIndex = position.firstVisibleItemIndex
+                                             .coerceIn(0, songs.lastIndex)
+                                     )
+                                 )
+                             }
+                     }
+
+                     // Garantiza la última posición al pasar la Activity a segundo
+                     // plano, incluso si aún no terminó el debounce.
+                     DisposableEffect(libraryListState, songs.size) {
+                         val observer = LifecycleEventObserver { _, event ->
+                             if (event == Lifecycle.Event.ON_STOP && songs.isNotEmpty()) {
+                                 libraryScrollStore.save(
+                                     LibraryScrollPosition(
+                                         firstVisibleItemIndex = libraryListState.firstVisibleItemIndex
+                                             .coerceIn(0, songs.lastIndex),
+                                         firstVisibleItemScrollOffset =
+                                             libraryListState.firstVisibleItemScrollOffset
+                                     )
+                                 )
+                             }
+                         }
+                         lifecycle.addObserver(observer)
+                         onDispose { lifecycle.removeObserver(observer) }
+                     }
+
+                     // La biblioteca se desmonta mientras se muestra el reproductor.
+                     // Conservamos aquí el último cambio de identidad ocurrido durante
+                     // ese intervalo, sin confundirlo con la restauración inicial.
+                     LaunchedEffect(currentSongId) {
+                         if (currentSongId != lastObservedSongId) {
+                             if (restoredScreen == true && currentSongId != null) {
+                                 pendingLibraryFollowId = currentSongId
+                             }
+                             lastObservedSongId = currentSongId
+                         }
+                     }
 
                     BackHandler(enabled = settingsOpen || restoredScreen == true) {
                         if (settingsOpen) {
@@ -142,6 +224,13 @@ class MainActivity : ComponentActivity() {
                                     } else {
                                         HomeScreen(
                                             viewModel = vm,
+                                            listState = libraryListState,
+                                            pendingFollowId = pendingLibraryFollowId,
+                                            onPendingFollowHandled = { songId ->
+                                                if (pendingLibraryFollowId == songId) {
+                                                    pendingLibraryFollowId = null
+                                                }
+                                            },
                                             onOpenPlayer = { vm.setShowPlayer(true) },
                                             onOpenSettings = { settingsOpen = true }
                                         )
