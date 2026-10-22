@@ -45,7 +45,7 @@ Un reproductor de música local para Android, de código abierto, con una interf
 - [Agradecimientos](#-agradecimientos)
 - [Licencia](#-licencia)
 
-## 🎉 Características
+##  Características
 
 JexPlayer está diseñado para escuchar la música que ya tienes en tu dispositivo, con una interfaz oscura, sencilla y centrada en la reproducción.
 
@@ -110,7 +110,7 @@ Cuando estén listas, añade las capturas del repositorio, por ejemplo:
 </p>
 -->
 
-## 📥 Descargar e instalar
+##  Descargar e instalar
 
 <div align="center">
 
@@ -127,7 +127,7 @@ Cuando estén listas, añade las capturas del repositorio, por ejemplo:
 
 > Si todavía no hay una versión publicada, la sección de versiones puede aparecer vacía. Descarga e instala APK únicamente desde fuentes oficiales del proyecto.
 
-## 🛠️ Tecnologías
+##  Tecnologías
 
 | Tecnología | Uso |
 |---|---|
@@ -150,7 +150,7 @@ Cuando estén listas, añade las capturas del repositorio, por ejemplo:
 | Versión mínima | Android 7.0 (API 24) |
 | Licencia | MIT |
 
-## 🔐 Permisos
+##  Permisos
 
 JexPlayer utiliza permisos y mecanismos de Android para acceder a las carpetas que eliges y permitir la reproducción multimedia.
 
@@ -160,13 +160,13 @@ JexPlayer utiliza permisos y mecanismos de Android para acceder a las carpetas q
 
 JexPlayer está enfocado en la reproducción de archivos locales. No necesita una cuenta de usuario ni un servidor propio para reproducir tu biblioteca musical.
 
-## 🚧 Estado del proyecto
+##  Estado del proyecto
 
 JexPlayer está en desarrollo. Las funciones descritas reflejan el alcance previsto y documentado del proyecto, pero la disponibilidad puede variar entre versiones.
 
 Algunas áreas, como la gestión completa de listas de reproducción y favoritos, opciones avanzadas de ordenamiento y personalización, pueden seguir pendientes de implementación. Consulta las notas de cada versión para conocer los cambios y limitaciones concretos.
 
-## 🤝 Contribuir
+##  Contribuir
 
 ¿Encontraste un error o tienes una idea para mejorar JexPlayer?
 
@@ -174,13 +174,24 @@ Algunas áreas, como la gestión completa de listas de reproducción y favoritos
 - Comparte sugerencias con pasos claros y, cuando sea posible, capturas de pantalla.
 - Las contribuciones deben respetar el alcance del proyecto y mantener la reproducción local estable.
 
-## 🙏 Agradecimientos
+## Colaboradores
+
+Gracias a todas las personas que contribuyen a hacer crecer JexPlayer.
+
+<a href="https://github.com/Cloudjexp/JexPlayer/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=Cloudjexp/JexPlayer" alt="Colaboradores de JexPlayer" />
+</a>
+
+¿Quieres contribuir? ¡Toda ayuda es bienvenida!
+
+
+##  Agradecimientos
 
 JexPlayer está construido con herramientas y bibliotecas de código abierto. Gracias a sus mantenedores y colaboradores por hacer posible este proyecto.
 
 Si te gusta JexPlayer, puedes apoyar su desarrollo dando una ⭐ al repositorio.
 
-## 📄 Licencia
+##  Licencia
 
 JexPlayer se distribuye bajo la licencia **MIT**. Consulta el archivo [`LICENSE`](LICENSE) para conocer los términos completos.
 
