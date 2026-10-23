@@ -58,6 +58,8 @@ fun SettingsScreen(
     val message by viewModel.folderMessage.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val selectedTheme by viewModel.selectedAppearanceTheme.collectAsState()
+    val isCheckingUpdates by viewModel.isCheckingUpdates.collectAsState()
+    val updateMessage by viewModel.updateMessage.collectAsState()
     var folderToRemove by remember { mutableStateOf<MusicFolder?>(null) }
     val context = LocalContext.current
     val versionName = remember {
@@ -196,6 +198,21 @@ fun SettingsScreen(
             Text("JexPlayer", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             if (!versionName.isNullOrBlank()) {
                 Text("Versión $versionName", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            OutlinedButton(
+                onClick = { viewModel.checkForUpdates() },
+                enabled = !isCheckingUpdates,
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
+            ) {
+                Text(if (isCheckingUpdates) "Comprobando…" else "Buscar actualizaciones")
+            }
+            updateMessage?.let { message ->
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
             }
         }
         Spacer(Modifier.height(24.dp))
