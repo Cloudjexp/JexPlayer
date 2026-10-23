@@ -23,6 +23,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Button
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -49,6 +53,12 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.style.TextOverflow
+import android.content.Intent
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cloudjex.jexplayer.ui.home.HomeScreen
 import com.cloudjex.jexplayer.ui.home.WelcomeScreen
@@ -89,7 +99,8 @@ class MainActivity : ComponentActivity() {
                     val folders by vm.folders.collectAsState()
                      val restoredScreen by vm.showPlayer.collectAsState()
                      val currentSongId by vm.currentSongId.collectAsState()
-                     val songs by vm.songs.collectAsState()
+                      val songs by vm.songs.collectAsState()
+                      val availableUpdate by vm.availableUpdate.collectAsState()
                      val libraryScrollStore = remember {
                          LibraryScrollPositionStore(applicationContext)
                      }
@@ -177,13 +188,23 @@ class MainActivity : ComponentActivity() {
                              WindowInsetsSides.Top + WindowInsetsSides.Horizontal
                          )
                      ) { innerPadding ->
-                        Box(modifier = Modifier.padding(innerPadding)) {
+                         Column(modifier = Modifier.padding(innerPadding)) {
+                             availableUpdate?.let { update ->
+                                 UpdateBanner(
+                                     update = update,
+                                     onDismiss = vm::dismissUpdate,
+                                     onDownload = {
+                                         startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(update.htmlUrl)))
+                                     }
+                                 )
+                             }
+                             Box(modifier = Modifier.weight(1f)) {
                             val screen = restoredScreen
                             when {
                                 folders.isEmpty() -> {
                                     WelcomeScreen(onSelectFolders = { openFolderPicker() })
-                                }
-                                // La preferencia de pantalla pendiente no debe mostrar la biblioteca.
+                              }
+                                 // La preferencia de pantalla pendiente no debe mostrar la biblioteca.
                                 screen == null -> ScreenLoading()
 
                                 else -> if (settingsOpen) {
@@ -243,9 +264,42 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    }
 
     private fun openFolderPicker() {
         folderPickerLauncher.launch(null)
+    }
+}
+
+@Composable
+private fun UpdateBanner(
+    update: com.cloudjex.jexplayer.data.update.GithubRelease,
+    onDismiss: () -> Unit,
+    onDownload: () -> Unit
+) {
+    Surface(color = MaterialTheme.colorScheme.primaryContainer) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Nueva versión ${update.version}",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onDismiss) { Text("Descartar") }
+            }
+            if (update.notes.isNotBlank()) {
+                Text(
+                    update.notes,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.heightIn(max = 72.dp)
+                )
+            }
+            Button(onClick = onDownload, modifier = Modifier.padding(top = 6.dp)) {
+                Text("Descargar actualización")
+            }
+        }
     }
 }
 

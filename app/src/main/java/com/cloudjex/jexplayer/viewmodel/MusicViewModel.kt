@@ -44,6 +44,12 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import com.cloudjex.jexplayer.data.local.FavoritesStore
+import com.cloudjex.jexplayer.data.update.CheckResult
+import com.cloudjex.jexplayer.data.update.GithubReleaseClient
+import com.cloudjex.jexplayer.data.update.GithubRelease
+import com.cloudjex.jexplayer.data.update.UpdateChecker
+import com.cloudjex.jexplayer.data.update.updateCheckStore
+import com.cloudjex.jexplayer.BuildConfig
 
 
 
@@ -70,6 +76,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val screenPreferences = ScreenPreferenceStore.from(appContext)
     private val appearancePreferences =
         AppearancePreferenceStore.from(appContext)
+    private val updateChecker = UpdateChecker(
+        client = GithubReleaseClient(),
+        store = updateCheckStore(appContext),
+        installedVersion = BuildConfig.VERSION_NAME
+    )
 
     private val favoritesStore = FavoritesStore.from(appContext)
     private val lastSongStore = LastSongStore(appContext)
@@ -166,6 +177,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _folderMessage = MutableStateFlow<String?>(null)
     val folderMessage: StateFlow<String?> = _folderMessage.asStateFlow()
+
+    private val _availableUpdate = MutableStateFlow<GithubRelease?>(null)
+    val availableUpdate: StateFlow<GithubRelease?> = _availableUpdate.asStateFlow()
+    private val _isCheckingUpdates = MutableStateFlow(false)
+    val isCheckingUpdates: StateFlow<Boolean> = _isCheckingUpdates.asStateFlow()
+    private val _updateMessage = MutableStateFlow<String?>(null)
+    val updateMessage: StateFlow<String?> = _updateMessage.asStateFlow()
 
     private val _audioTags = MutableStateFlow<AudioTags?>(null)
     val audioTags: StateFlow<AudioTags?> = _audioTags.asStateFlow()
@@ -264,6 +282,40 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 AppearanceTheme.default
             }
         }
+
+        // El ViewModel vive una vez por Activity: no depende de recomposiciones ni de
+        // cambios de pantalla. El propio checker aplica los intervalos persistidos.
+        checkForUpdates(manual = false)
+    }
+
+    fun checkForUpdates(manual: Boolean = true) {
+        if (_isCheckingUpdates.value) return
+        viewModelScope.launch {
+            _isCheckingUpdates.value = true
+            when (val result = updateChecker.check(force = manual)) {
+                CheckResult.Skipped -> if (manual) {
+                    _updateMessage.value = "Ya se comprobó recientemente. Inténtalo más tarde."
+                }
+                CheckResult.Failed -> if (manual) {
+                    _updateMessage.value = "No se pudo comprobar si hay actualizaciones."
+                }
+                is CheckResult.Success -> {
+                    if (result.update == null) {
+                        if (manual) _updateMessage.value = "Ya tienes la última versión."
+                    } else if (manual || !result.wasDismissed) {
+                        _availableUpdate.value = result.update
+                        if (manual) _updateMessage.value = "Hay una actualización disponible."
+                    }
+                }
+            }
+            _isCheckingUpdates.value = false
+        }
+    }
+
+    fun dismissUpdate() {
+        val version = _availableUpdate.value?.version ?: return
+        _availableUpdate.value = null
+        viewModelScope.launch { updateChecker.dismiss(version) }
     }
 
     /**
