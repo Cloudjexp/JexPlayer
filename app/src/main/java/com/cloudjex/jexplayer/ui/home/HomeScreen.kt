@@ -85,12 +85,15 @@ fun HomeScreen(
     var isSearchVisible by rememberSaveable { mutableStateOf(false) }
     var showFilters by rememberSaveable { mutableStateOf(false) }
     var selectedFolderUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedTab by rememberSaveable {
+        mutableStateOf(0)
+    }
 
     val filteredSongs = songs.filter { song ->
         (selectedFolderUri == null || song.id.startsWith("${selectedFolderUri}/")) &&
                 (song.title.contains(searchQuery, ignoreCase = true) ||
-                song.artist.contains(searchQuery, ignoreCase = true) ||
-                song.album.contains(searchQuery, ignoreCase = true))
+                        song.artist.contains(searchQuery, ignoreCase = true) ||
+                        song.album.contains(searchQuery, ignoreCase = true))
     }
 
     Column(
@@ -98,93 +101,178 @@ fun HomeScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        LibraryHeader(
-            isScanning = isScanning,
-            isSearchVisible = isSearchVisible,
-            onSearch = { isSearchVisible = true },
-            onSettings = onOpenSettings
-        )
 
-        AnimatedVisibility(
-            visible = isSearchVisible,
-            enter = fadeIn() + expandHorizontally(expandFrom = Alignment.End),
-            exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.End)
-        ) {
-            SearchField(
-                query = searchQuery,
-                onQueryChange = { searchQuery = it },
-                onClose = {
-                    searchQuery = ""
-                    isSearchVisible = false
+        // Cambia el contenido según la pestaña seleccionada
+        when (selectedTab) {
+
+            // PESTAÑA 0: MÚSICA
+            0 -> {
+                LibraryHeader(
+                    isScanning = isScanning,
+                    isSearchVisible = isSearchVisible,
+                    onSearch = { isSearchVisible = true },
+                    onSettings = onOpenSettings
+                )
+
+                AnimatedVisibility(
+                    visible = isSearchVisible,
+                    enter = fadeIn() + expandHorizontally(
+                        expandFrom = Alignment.End
+                    ),
+                    exit = fadeOut() + shrinkHorizontally(
+                        shrinkTowards = Alignment.End
+                    )
+                ) {
+                    SearchField(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        onClose = {
+                            searchQuery = ""
+                            isSearchVisible = false
+                        }
+                    )
                 }
-            )
-        }
 
-        LibrarySummary(
-            songCount = songs.size,
-            filtersVisible = showFilters,
-            onToggleFilters = { showFilters = !showFilters }
-        )
-
-        if (showFilters) FoldersFilterRow(
-            folders = folders,
-            revokedFolderUris = revokedFolderUris,
-            selectedFolderUri = selectedFolderUri,
-            onFolderSelected = { selectedFolderUri = it }
-        )
-
-        folderMessage?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
-            )
-        }
-
-        Box(modifier = Modifier.weight(1f)) {
-            if (filteredSongs.isEmpty()) {
-                EmptyLibrary(
-                    message = when {
-                        searchQuery.isNotBlank() || selectedFolderUri != null ->
-                            "No se encontraron canciones con estos filtros."
-                        isScanning -> "Escaneando carpetas…"
-                        else -> "No se encontraron archivos de audio en las carpetas seleccionadas."
+                LibrarySummary(
+                    songCount = songs.size,
+                    filtersVisible = showFilters,
+                    onToggleFilters = {
+                        showFilters = !showFilters
                     }
                 )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp)
-                ) {
-                    items(filteredSongs, key = { it.id }) { song ->
-                        SongItem(
-                            song = song,
-                            isCurrent = song.id == currentSongId,
-                            onClick = { viewModel.playSong(song) }
+
+                if (showFilters) {
+                    FoldersFilterRow(
+                        folders = folders,
+                        revokedFolderUris = revokedFolderUris,
+                        selectedFolderUri = selectedFolderUri,
+                        onFolderSelected = {
+                            selectedFolderUri = it
+                        }
+                    )
+                }
+
+                folderMessage?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(
+                            horizontal = 20.dp,
+                            vertical = 2.dp
                         )
+                    )
+                }
+
+                // Lista de canciones
+                Box(modifier = Modifier.weight(1f)) {
+
+                    if (filteredSongs.isEmpty()) {
+                        EmptyLibrary(
+                            message = when {
+                                searchQuery.isNotBlank() ||
+                                        selectedFolderUri != null ->
+                                    "No se encontraron canciones con estos filtros."
+
+                                isScanning ->
+                                    "Escaneando carpetas…"
+
+                                else ->
+                                    "No se encontraron archivos de audio en las carpetas seleccionadas."
+                            }
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding =
+                                androidx.compose.foundation.layout.PaddingValues(
+                                    vertical = 8.dp
+                                )
+                        ) {
+                            items(
+                                filteredSongs,
+                                key = { it.id }
+                            ) { song ->
+                                SongItem(
+                                    song = song,
+                                    isCurrent = song.id == currentSongId,
+                                    onClick = {
+                                        viewModel.playSong(song)
+                                    }
+                                )
+                            }
+                        }
                     }
+                }
+            }
+
+            // PESTAÑA 1: LISTAS
+            1 -> {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Tus listas de reproducción",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                }
+            }
+
+            // PESTAÑA 2: CARPETAS
+            2 -> {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Tus carpetas de música",
+                        style = MaterialTheme.typography.titleLarge
+                    )
                 }
             }
         }
 
+        // MINIRREPRODUCTOR
+        // Se mantiene visible al cambiar de pestaña
         if (currentSong != null) {
             MiniPlayer(
                 song = currentSong,
                 isPlaying = isPlaying,
                 isShuffleEnabled = isShuffleEnabled,
                 repeatMode = repeatMode,
-                onPrevious = { viewModel.previousSong() },
-                onPlayPause = { viewModel.togglePlayPause() },
-                onNext = { viewModel.nextSong() },
-                onShuffle = { viewModel.toggleShuffle() },
-                onRepeat = { viewModel.toggleRepeat() },
+                onPrevious = {
+                    viewModel.previousSong()
+                },
+                onPlayPause = {
+                    viewModel.togglePlayPause()
+                },
+                onNext = {
+                    viewModel.nextSong()
+                },
+                onShuffle = {
+                    viewModel.toggleShuffle()
+                },
+                onRepeat = {
+                    viewModel.toggleRepeat()
+                },
                 onOpenPlayer = onOpenPlayer
             )
         }
 
-        JexBottomBar()
+        // BARRA DE NAVEGACIÓN INFERIOR
+        JexBottomBar(
+            selectedTab = selectedTab,
+            onTabSelected = {
+                selectedTab = it
+            }
+        )
     }
+
 }
 
 @Composable
@@ -650,23 +738,38 @@ private fun PlayPauseButton(
 }
 
 @Composable
-private fun JexBottomBar() {
+private fun JexBottomBar(
+    selectedTab: Int,
+    onTabSelected: (Int) -> Unit
+) {
     val items = listOf(
-        BottomBarItem(JexSymbol.LibraryMusic, "Música", selected = true),
-        BottomBarItem(JexSymbol.QueueMusic, "Listas", selected = false),
-        BottomBarItem(JexSymbol.Favorite, "Favoritos", selected = false),
-        BottomBarItem(JexSymbol.Folder, "Carpetas", selected = false)
+        BottomBarItem(
+            JexSymbol.LibraryMusic,
+            "Música",
+            selected = selectedTab == 0
+        ),
+        BottomBarItem(
+            JexSymbol.QueueMusic,
+            "Listas",
+            selected = selectedTab == 1
+        ),
+        BottomBarItem(
+            JexSymbol.Folder,
+            "Carpetas",
+            selected = selectedTab == 2
+        )
     )
 
     NavigationBar(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 3.dp
     ) {
-        items.forEach { item ->
+        items.forEachIndexed { index, item ->
             NavigationBarItem(
                 selected = item.selected,
-                // Estos destinos siguen siendo etiquetas visuales hasta que exista su funcionalidad.
-                onClick = {},
+                onClick = {
+                    onTabSelected(index)
+                },
                 icon = {
                     JexSymbolIcon(
                         symbol = item.icon,
@@ -674,7 +777,9 @@ private fun JexBottomBar() {
                         modifier = Modifier.size(24.dp)
                     )
                 },
-                label = { Text(text = item.label) }
+                label = {
+                    Text(text = item.label)
+                }
             )
         }
     }
