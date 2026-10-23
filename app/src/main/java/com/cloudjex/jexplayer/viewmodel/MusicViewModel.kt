@@ -43,6 +43,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import com.cloudjex.jexplayer.data.local.FavoritesStore
 
 
 
@@ -67,7 +68,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val scanner = SafMusicScanner(appContext, albumArtStore)
     private val libraryCache = LibraryCache.from(appContext)
     private val screenPreferences = ScreenPreferenceStore.from(appContext)
-    private val appearancePreferences = AppearancePreferenceStore.from(appContext)
+    private val appearancePreferences =
+        AppearancePreferenceStore.from(appContext)
+
+    private val favoritesStore = FavoritesStore.from(appContext)
     private val lastSongStore = LastSongStore(appContext)
     private val restoredLastSong = lastSongStore.load()
     private var scanJob: Job? = null
@@ -151,6 +155,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _folders = MutableStateFlow<List<MusicFolder>>(emptyList())
     val folders: StateFlow<List<MusicFolder>> = _folders.asStateFlow()
 
+    private val _favoriteIds =
+        MutableStateFlow<Set<String>>(emptySet())
+
+    val favoriteIds: StateFlow<Set<String>> =
+        _favoriteIds.asStateFlow()
+
     private val _revokedFolderUris = MutableStateFlow<Set<String>>(emptySet())
     val revokedFolderUris: StateFlow<Set<String>> = _revokedFolderUris.asStateFlow()
 
@@ -200,10 +210,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 pendingAction?.let { action ->
                     action(connected)
                     pendingAction = null
+                    viewModelScope.launch {
+                        favoritesStore.favoriteIds.collect { ids ->
+                            _favoriteIds.value = ids
+                        }
+                    }
                 }
             },
             ContextCompat.getMainExecutor(application.applicationContext)
         )
+        fun toggleFavorite(songId: String) {
+            viewModelScope.launch {
+                favoritesStore.toggleFavorite(songId)
+            }
+        }
 
         startProgressTracking()
         reloadLibrary()
