@@ -179,7 +179,7 @@ Algunas áreas, como la gestión completa de listas de reproducción y favoritos
 Gracias a todas las personas que contribuyen a hacer crecer JexPlayer.
 
 <a href="https://github.com/Cloudjexp/JexPlayer/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=Cloudjexp/JexPlayer" alt="Colaboradores de JexPlayer" />
+  <img src="https://contrib.rocks/image?repo=Cloudjexp/JexPlayer&v=2" alt="Colaboradores de JexPlayer" />
 </a>
 
 ¿Quieres contribuir? ¡Toda ayuda es bienvenida!
