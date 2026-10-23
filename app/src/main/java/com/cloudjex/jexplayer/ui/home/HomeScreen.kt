@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,6 +37,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,18 +57,22 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.request.ImageRequest
+import androidx.compose.ui.platform.LocalDensity
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
-import android.util.Log
-import androidx.compose.runtime.LaunchedEffect
 
 @Composable
 fun HomeScreen(
     viewModel: MusicViewModel,
+    listState: LazyListState = rememberLazyListState(),
+    pendingFollowId: String? = null,
+    onPendingFollowHandled: (String) -> Unit = {},
     onOpenPlayer: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -81,14 +88,7 @@ fun HomeScreen(
     val revokedFolderUris by viewModel.revokedFolderUris.collectAsState()
     val folderMessage by viewModel.folderMessage.collectAsState()
     val currentSongId by viewModel.currentSongId.collectAsState()
-    val restoredSong by viewModel.restoredSong.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
-    val isPlaying by viewModel.isPlaying.collectAsState()
-    val isShuffleEnabled by viewModel.isShuffleEnabled.collectAsState()
-    val repeatMode by viewModel.repeatMode.collectAsState()
-
-    val currentSong = songs.find { it.id == currentSongId }
-        ?: restoredSong?.takeIf { it.id == currentSongId }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var isSearchVisible by rememberSaveable { mutableStateOf(false) }
@@ -101,13 +101,14 @@ fun HomeScreen(
         mutableStateOf(0)
     }
 
-    val filteredSongs = songs.filter { song ->
-        (selectedFolderUri == null || song.id.startsWith("${selectedFolderUri}/")) &&
-                (song.title.contains(searchQuery, ignoreCase = true) ||
-                        song.artist.contains(searchQuery, ignoreCase = true) ||
-                        song.album.contains(searchQuery, ignoreCase = true))
+    val filteredSongs = remember(songs, searchQuery, selectedFolderUri) {
+        songs.filter { song ->
+            (selectedFolderUri == null || song.id.startsWith("${selectedFolderUri}/")) &&
+                    (song.title.contains(searchQuery, ignoreCase = true) ||
+                    song.artist.contains(searchQuery, ignoreCase = true) ||
+                    song.album.contains(searchQuery, ignoreCase = true))
+        }
     }
-
     val favoriteSongs = songs.filter { song ->
         song.id in favoriteIds
     }
@@ -156,7 +157,6 @@ fun HomeScreen(
                         showFilters = !showFilters
                     }
                 )
-
                 if (showFilters) {
                     FoldersFilterRow(
                         folders = folders,
@@ -180,9 +180,7 @@ fun HomeScreen(
                     )
                 }
 
-                // Lista de canciones
                 Box(modifier = Modifier.weight(1f)) {
-
                     if (filteredSongs.isEmpty()) {
                         EmptyLibrary(
                             message = when {
@@ -198,35 +196,14 @@ fun HomeScreen(
                             }
                         )
                     } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding =
-                                androidx.compose.foundation.layout.PaddingValues(
-                                    vertical = 8.dp
-                                )
-                        ) {
-                            items(
-                                filteredSongs,
-                                key = { it.id }
-                            ) { song ->
-                                SongItem(
-                                    song = song,
-                                    isCurrent = song.id == currentSongId,
-                                    isFavorite = song.id in favoriteIds,
-                                    onClick = {
-                                        viewModel.playSong(song)
-                                    },
-                                    onFavoriteClick = {
-                                        android.util.Log.d(
-                                            "JexFavorites",
-                                            "Favorite clicked: ${song.title}, ID: ${song.id}"
-                                        )
-
-                                        viewModel.toggleFavorite(song.id)
-                                    }
-                                )
-                            }
-                        }
+                        LibrarySongList(
+                            filteredSongs = filteredSongs,
+                            favoriteIds = favoriteIds,
+                            viewModel = viewModel,
+                            listState = listState,
+                            pendingFollowId = pendingFollowId,
+                            onPendingFollowHandled = onPendingFollowHandled
+                        )
                     }
                 }
             }
@@ -340,32 +317,7 @@ fun HomeScreen(
             }
         }
 
-        // MINIRREPRODUCTOR
-        // Se mantiene visible al cambiar de pestaña
-        if (currentSong != null) {
-            MiniPlayer(
-                song = currentSong,
-                isPlaying = isPlaying,
-                isShuffleEnabled = isShuffleEnabled,
-                repeatMode = repeatMode,
-                onPrevious = {
-                    viewModel.previousSong()
-                },
-                onPlayPause = {
-                    viewModel.togglePlayPause()
-                },
-                onNext = {
-                    viewModel.nextSong()
-                },
-                onShuffle = {
-                    viewModel.toggleShuffle()
-                },
-                onRepeat = {
-                    viewModel.toggleRepeat()
-                },
-                onOpenPlayer = onOpenPlayer
-            )
-        }
+        MiniPlayerHost(songs = songs, viewModel = viewModel, onOpenPlayer = onOpenPlayer)
 
         // BARRA DE NAVEGACIÓN INFERIOR
         JexBottomBar(
@@ -376,6 +328,101 @@ fun HomeScreen(
         )
     }
 
+}
+
+@Composable
+private fun LibrarySongList(
+    filteredSongs: List<Song>,
+    favoriteIds: Set<String>,
+    viewModel: MusicViewModel,
+    listState: LazyListState,
+    pendingFollowId: String?,
+    onPendingFollowHandled: (String) -> Unit
+) {
+    val currentSongId by viewModel.currentSongId.collectAsState()
+    var observedSongId by remember { mutableStateOf(currentSongId) }
+    var hasObservedSong by remember { mutableStateOf(false) }
+    var localFollowId by remember { mutableStateOf<String?>(null) }
+
+    // Solo una nueva identidad de canción genera una solicitud. Los cambios de
+    // progreso, reproducción y visualizador no pasan por este efecto.
+    LaunchedEffect(currentSongId) {
+        if (!hasObservedSong) {
+            hasObservedSong = true
+            observedSongId = currentSongId
+        } else if (
+            currentSongId != null &&
+            currentSongId != observedSongId
+        ) {
+            observedSongId = currentSongId
+            localFollowId = currentSongId
+        }
+    }
+
+    val followId = pendingFollowId ?: localFollowId
+    LaunchedEffect(followId, filteredSongs) {
+        val songId = followId ?: return@LaunchedEffect
+        val index = filteredSongs.indexOfFirst { it.id == songId }
+        if (index == -1) return@LaunchedEffect
+
+        // Mantener una canción ya visible evita reposicionamientos innecesarios.
+        if (listState.layoutInfo.visibleItemsInfo.none { it.index == index }) {
+            listState.scrollToItem(index)
+        }
+
+        if (pendingFollowId == songId) onPendingFollowHandled(songId)
+        if (localFollowId == songId) localFollowId = null
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        state = listState,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp)
+    ) {
+        items(
+            items = filteredSongs,
+            key = { it.id },
+            contentType = { "song" }
+        ) { song ->
+            SongItem(
+                song = song,
+                isCurrent = song.id == currentSongId,
+                isFavorite = song.id in favoriteIds,
+                onClick = { viewModel.playSong(song) },
+                onFavoriteClick = { viewModel.toggleFavorite(song.id) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun MiniPlayerHost(
+    songs: List<Song>,
+    viewModel: MusicViewModel,
+    onOpenPlayer: () -> Unit
+) {
+    val currentSongId by viewModel.currentSongId.collectAsState()
+    val restoredSong by viewModel.restoredSong.collectAsState()
+    val isPlaying by viewModel.isPlaying.collectAsState()
+    val isShuffleEnabled by viewModel.isShuffleEnabled.collectAsState()
+    val repeatMode by viewModel.repeatMode.collectAsState()
+    val currentSong = songs.find { it.id == currentSongId }
+        ?: restoredSong?.takeIf { it.id == currentSongId }
+
+    if (currentSong != null) {
+        MiniPlayer(
+            song = currentSong,
+            isPlaying = isPlaying,
+            isShuffleEnabled = isShuffleEnabled,
+            repeatMode = repeatMode,
+            onPrevious = { viewModel.previousSong() },
+            onPlayPause = { viewModel.togglePlayPause() },
+            onNext = { viewModel.nextSong() },
+            onShuffle = { viewModel.toggleShuffle() },
+            onRepeat = { viewModel.toggleRepeat() },
+            onOpenPlayer = onOpenPlayer
+        )
+    }
 }
 
 @Composable
@@ -621,14 +668,30 @@ private fun SongArtwork(
     size: Dp,
     cornerRadius: Dp
 ) {
-    val placeholderPainter = ColorPainter(MaterialTheme.colorScheme.secondaryContainer)
+    val placeholderColor = MaterialTheme.colorScheme.secondaryContainer
+    val placeholderPainter = remember(placeholderColor) { ColorPainter(placeholderColor) }
+    val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
+    val density = LocalDensity.current
+    val context = LocalPlatformContext.current
+    val sizePx = with(density) { size.roundToPx() }
+    val imageRequest = remember(song.albumArtUri, sizePx) {
+        ImageRequest.Builder(context)
+            .data(song.albumArtUri)
+            // Las portadas originales pueden ser grandes; una fila solo necesita
+            // los píxeles de su miniatura. La clave incluye el tamaño para no
+            // mezclar la portada de 48 dp con la de 82 dp.
+            .size(sizePx)
+            .memoryCacheKey("${song.albumArtUri}|$sizePx")
+            .diskCacheKey("${song.albumArtUri}|$sizePx")
+            .build()
+    }
 
     AsyncImage(
-        model = song.albumArtUri,
+        model = imageRequest,
         contentDescription = song.album,
         modifier = Modifier
             .size(size)
-            .clip(RoundedCornerShape(cornerRadius)),
+            .clip(shape),
         contentScale = ContentScale.Crop,
         placeholder = placeholderPainter,
         error = placeholderPainter,
@@ -644,6 +707,8 @@ private fun SongItem(
     onClick: () -> Unit,
     onFavoriteClick: () -> Unit
 ) {
+    val durationText = remember(song.duration) { formatDuration(song.duration) }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -723,11 +788,11 @@ private fun SongItem(
                         },
                         modifier = Modifier.size(22.dp)
                     )
-                }
-            } // Cierra Column del corazón
-        } // Cierra Row
-    } // Cierra Surface
-} // Cierra SongItem
+            }
+            }
+        }
+    }
+}
 
 @Composable
 private fun EmptyLibrary(message: String) {
