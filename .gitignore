@@ -1,18 +1,40 @@
 # Gradle
 .gradle/
-build/
 **/build/
-
-local.properties
-.idea/
-*.iml
-
 .kotlin/
 
+# Android Studio / IDE local files
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Local Android SDK and signing configuration
+local.properties
+**/keystore.properties
+**/signing.properties
+**/*-signing.properties
+**/*signing*.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+
+# Android/NDK generated files and build artifacts
 .externalNativeBuild/
 .cxx/
-
 captures/
-.DS_Store
+**/*.apk
+**/mapping.txt
+**/output-metadata.json
 
+# Temporary and operating-system files
+*.log
+*.tmp
+*.temp
+*~
+.DS_Store
+Thumbs.db
+
+# Design mockups (kept for the repository's existing layout)
 /design/
