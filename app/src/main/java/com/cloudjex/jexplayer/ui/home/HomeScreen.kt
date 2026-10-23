@@ -60,6 +60,8 @@ import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
+import android.util.Log
+import androidx.compose.runtime.LaunchedEffect
 
 @Composable
 fun HomeScreen(
@@ -68,6 +70,13 @@ fun HomeScreen(
     onOpenSettings: () -> Unit
 ) {
     val songs by viewModel.songs.collectAsState()
+    val favoriteIds by viewModel.favoriteIds.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(favoriteIds) {
+        android.util.Log.d(
+            "JexFavorites",
+            "Stored favorites: ${favoriteIds.size} - $favoriteIds"
+        )
+    }
     val folders by viewModel.folders.collectAsState()
     val revokedFolderUris by viewModel.revokedFolderUris.collectAsState()
     val folderMessage by viewModel.folderMessage.collectAsState()
@@ -84,6 +93,9 @@ fun HomeScreen(
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var isSearchVisible by rememberSaveable { mutableStateOf(false) }
     var showFilters by rememberSaveable { mutableStateOf(false) }
+    var showFavoritesPlaylist by rememberSaveable {
+        mutableStateOf(false)
+    }
     var selectedFolderUri by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedTab by rememberSaveable {
         mutableStateOf(0)
@@ -94,6 +106,10 @@ fun HomeScreen(
                 (song.title.contains(searchQuery, ignoreCase = true) ||
                         song.artist.contains(searchQuery, ignoreCase = true) ||
                         song.album.contains(searchQuery, ignoreCase = true))
+    }
+
+    val favoriteSongs = songs.filter { song ->
+        song.id in favoriteIds
     }
 
     Column(
@@ -196,8 +212,17 @@ fun HomeScreen(
                                 SongItem(
                                     song = song,
                                     isCurrent = song.id == currentSongId,
+                                    isFavorite = song.id in favoriteIds,
                                     onClick = {
                                         viewModel.playSong(song)
+                                    },
+                                    onFavoriteClick = {
+                                        android.util.Log.d(
+                                            "JexFavorites",
+                                            "Favorite clicked: ${song.title}, ID: ${song.id}"
+                                        )
+
+                                        viewModel.toggleFavorite(song.id)
                                     }
                                 )
                             }
@@ -208,16 +233,94 @@ fun HomeScreen(
 
             // PESTAÑA 1: LISTAS
             1 -> {
-                Box(
+                Column(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .padding(16.dp)
                 ) {
-                    Text(
-                        text = "Tus listas de reproducción",
-                        style = MaterialTheme.typography.titleLarge
-                    )
+                    if (!showFavoritesPlaylist) {
+                        Text(
+                            text = "Tus listas",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showFavoritesPlaylist = true
+                                },
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainer
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(20.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                JexSymbolIcon(
+                                    symbol = JexSymbol.Favorite,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(32.dp)
+                                )
+
+                                Spacer(modifier = Modifier.width(16.dp))
+
+                                Column {
+                                    Text(
+                                        text = "Favoritos",
+                                        style = MaterialTheme.typography.titleLarge
+                                    )
+
+                                    Text(
+                                        text = "${favoriteSongs.size} canciones",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "← Favoritos",
+                            style = MaterialTheme.typography.headlineSmall,
+                            modifier = Modifier
+                                .clickable {
+                                    showFavoritesPlaylist = false
+                                }
+                                .padding(bottom = 16.dp)
+                        )
+
+                        if (favoriteSongs.isEmpty()) {
+                            Text(
+                                text = "Todavía no tienes canciones favoritas.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        } else {
+                            LazyColumn {
+                                items(
+                                    favoriteSongs,
+                                    key = { it.id }
+                                ) { song ->
+                                    SongItem(
+                                        song = song,
+                                        isCurrent = song.id == currentSongId,
+                                        isFavorite = true,
+                                        onClick = {
+                                            viewModel.playSong(song)
+                                        },
+                                        onFavoriteClick = {
+                                            viewModel.toggleFavorite(song.id)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -537,7 +640,9 @@ private fun SongArtwork(
 private fun SongItem(
     song: Song,
     isCurrent: Boolean,
-    onClick: () -> Unit
+    isFavorite: Boolean,
+    onClick: () -> Unit,
+    onFavoriteClick: () -> Unit
 ) {
     Surface(
         modifier = Modifier
@@ -589,14 +694,40 @@ private fun SongItem(
             }
 
             Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                text = formatDuration(song.duration),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
+
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = formatDuration(song.duration),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                IconButton(
+                    onClick = onFavoriteClick,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    JexSymbolIcon(
+                        symbol = JexSymbol.Favorite,
+                        contentDescription = if (isFavorite) {
+                            "Quitar de favoritos"
+                        } else {
+                            "Agregar a favoritos"
+                        },
+                        tint = if (isFavorite) {
+                            androidx.compose.ui.graphics.Color(0xFFE57373)
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            } // Cierra Column del corazón
+        } // Cierra Row
+    } // Cierra Surface
+} // Cierra SongItem
 
 @Composable
 private fun EmptyLibrary(message: String) {

@@ -210,27 +210,46 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 pendingAction?.let { action ->
                     action(connected)
                     pendingAction = null
-                    viewModelScope.launch {
-                        favoritesStore.favoriteIds.collect { ids ->
-                            _favoriteIds.value = ids
-                        }
-                    }
+
                 }
             },
             ContextCompat.getMainExecutor(application.applicationContext)
         )
-        fun toggleFavorite(songId: String) {
-            viewModelScope.launch {
-                favoritesStore.toggleFavorite(songId)
-            }
-        }
+
 
         startProgressTracking()
         reloadLibrary()
         restoredLastSong?.song?.let(::cargarAudioTags)
 
-        // Se resuelve la preferencia antes de que la UI dibuje Home o Player;
-        // hasta entonces `showPlayer` es `null` y no se muestra ninguna pantalla.
+// Observar los favoritos guardados
+        viewModelScope.launch {
+            android.util.Log.d(
+                "JexFavorites",
+                "Starting favorites collection"
+            )
+
+            try {
+                favoritesStore.favoriteIds.collect { ids ->
+                    android.util.Log.d(
+                        "JexFavorites",
+                        "ViewModel received favorites: ${ids.size}"
+                    )
+
+                    _favoriteIds.value = ids
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e(
+                    "JexFavorites",
+                    "Error collecting favorites",
+                    e
+                )
+            }
+        }
+
+// Se resuelve la preferencia antes de que la UI dibuje Home o Player;
+// hasta entonces `showPlayer` es `null` y no se muestra ninguna pantalla.
         viewModelScope.launch {
             val saved = screenPreferences.lastScreen.first()
             if (!userChangedScreen) {
@@ -739,6 +758,36 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         playSong(songs[targetIndex])
     }
 
+    fun toggleFavorite(songId: String) {
+        android.util.Log.d(
+            "JexFavorites",
+            "ViewModel: toggleFavorite called"
+        )
+
+        viewModelScope.launch {
+            try {
+                android.util.Log.d(
+                    "JexFavorites",
+                    "Saving favorite: $songId"
+                )
+
+                favoritesStore.toggleFavorite(songId)
+
+                android.util.Log.d(
+                    "JexFavorites",
+                    "Favorite saved successfully"
+                )
+
+            } catch (e: Exception) {
+                android.util.Log.e(
+                    "JexFavorites",
+                    "Error saving favorite",
+                    e
+                )
+            }
+        }
+    }
+
     private fun playRandomOtherThan(currentSongId: String?, songs: List<Song>) {
         val candidates = songs.filter { it.id != currentSongId }
 
@@ -829,6 +878,7 @@ private fun Song.toMediaItem(): MediaItem {
         .setMediaMetadata(metadata)
         .build()
 }
+
 
 private fun MediaItem.toSongFallback(): Song? {
     val id = mediaId.takeIf { it.isNotBlank() } ?: return null
