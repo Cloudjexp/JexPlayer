@@ -60,6 +60,8 @@ import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
+import android.util.Log
+import androidx.compose.runtime.LaunchedEffect
 
 @Composable
 fun HomeScreen(
@@ -68,6 +70,13 @@ fun HomeScreen(
     onOpenSettings: () -> Unit
 ) {
     val songs by viewModel.songs.collectAsState()
+    val favoriteIds by viewModel.favoriteIds.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(favoriteIds) {
+        android.util.Log.d(
+            "JexFavorites",
+            "Stored favorites: ${favoriteIds.size} - $favoriteIds"
+        )
+    }
     val folders by viewModel.folders.collectAsState()
     val revokedFolderUris by viewModel.revokedFolderUris.collectAsState()
     val folderMessage by viewModel.folderMessage.collectAsState()
@@ -84,13 +93,23 @@ fun HomeScreen(
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var isSearchVisible by rememberSaveable { mutableStateOf(false) }
     var showFilters by rememberSaveable { mutableStateOf(false) }
+    var showFavoritesPlaylist by rememberSaveable {
+        mutableStateOf(false)
+    }
     var selectedFolderUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedTab by rememberSaveable {
+        mutableStateOf(0)
+    }
 
     val filteredSongs = songs.filter { song ->
         (selectedFolderUri == null || song.id.startsWith("${selectedFolderUri}/")) &&
                 (song.title.contains(searchQuery, ignoreCase = true) ||
-                song.artist.contains(searchQuery, ignoreCase = true) ||
-                song.album.contains(searchQuery, ignoreCase = true))
+                        song.artist.contains(searchQuery, ignoreCase = true) ||
+                        song.album.contains(searchQuery, ignoreCase = true))
+    }
+
+    val favoriteSongs = songs.filter { song ->
+        song.id in favoriteIds
     }
 
     Column(
@@ -98,93 +117,265 @@ fun HomeScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        LibraryHeader(
-            isScanning = isScanning,
-            isSearchVisible = isSearchVisible,
-            onSearch = { isSearchVisible = true },
-            onSettings = onOpenSettings
-        )
 
-        AnimatedVisibility(
-            visible = isSearchVisible,
-            enter = fadeIn() + expandHorizontally(expandFrom = Alignment.End),
-            exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.End)
-        ) {
-            SearchField(
-                query = searchQuery,
-                onQueryChange = { searchQuery = it },
-                onClose = {
-                    searchQuery = ""
-                    isSearchVisible = false
+        // Cambia el contenido según la pestaña seleccionada
+        when (selectedTab) {
+
+            // PESTAÑA 0: MÚSICA
+            0 -> {
+                LibraryHeader(
+                    isScanning = isScanning,
+                    isSearchVisible = isSearchVisible,
+                    onSearch = { isSearchVisible = true },
+                    onSettings = onOpenSettings
+                )
+
+                AnimatedVisibility(
+                    visible = isSearchVisible,
+                    enter = fadeIn() + expandHorizontally(
+                        expandFrom = Alignment.End
+                    ),
+                    exit = fadeOut() + shrinkHorizontally(
+                        shrinkTowards = Alignment.End
+                    )
+                ) {
+                    SearchField(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        onClose = {
+                            searchQuery = ""
+                            isSearchVisible = false
+                        }
+                    )
                 }
-            )
-        }
 
-        LibrarySummary(
-            songCount = songs.size,
-            filtersVisible = showFilters,
-            onToggleFilters = { showFilters = !showFilters }
-        )
-
-        if (showFilters) FoldersFilterRow(
-            folders = folders,
-            revokedFolderUris = revokedFolderUris,
-            selectedFolderUri = selectedFolderUri,
-            onFolderSelected = { selectedFolderUri = it }
-        )
-
-        folderMessage?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
-            )
-        }
-
-        Box(modifier = Modifier.weight(1f)) {
-            if (filteredSongs.isEmpty()) {
-                EmptyLibrary(
-                    message = when {
-                        searchQuery.isNotBlank() || selectedFolderUri != null ->
-                            "No se encontraron canciones con estos filtros."
-                        isScanning -> "Escaneando carpetas…"
-                        else -> "No se encontraron archivos de audio en las carpetas seleccionadas."
+                LibrarySummary(
+                    songCount = songs.size,
+                    filtersVisible = showFilters,
+                    onToggleFilters = {
+                        showFilters = !showFilters
                     }
                 )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp)
-                ) {
-                    items(filteredSongs, key = { it.id }) { song ->
-                        SongItem(
-                            song = song,
-                            isCurrent = song.id == currentSongId,
-                            onClick = { viewModel.playSong(song) }
+
+                if (showFilters) {
+                    FoldersFilterRow(
+                        folders = folders,
+                        revokedFolderUris = revokedFolderUris,
+                        selectedFolderUri = selectedFolderUri,
+                        onFolderSelected = {
+                            selectedFolderUri = it
+                        }
+                    )
+                }
+
+                folderMessage?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(
+                            horizontal = 20.dp,
+                            vertical = 2.dp
                         )
+                    )
+                }
+
+                // Lista de canciones
+                Box(modifier = Modifier.weight(1f)) {
+
+                    if (filteredSongs.isEmpty()) {
+                        EmptyLibrary(
+                            message = when {
+                                searchQuery.isNotBlank() ||
+                                        selectedFolderUri != null ->
+                                    "No se encontraron canciones con estos filtros."
+
+                                isScanning ->
+                                    "Escaneando carpetas…"
+
+                                else ->
+                                    "No se encontraron archivos de audio en las carpetas seleccionadas."
+                            }
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding =
+                                androidx.compose.foundation.layout.PaddingValues(
+                                    vertical = 8.dp
+                                )
+                        ) {
+                            items(
+                                filteredSongs,
+                                key = { it.id }
+                            ) { song ->
+                                SongItem(
+                                    song = song,
+                                    isCurrent = song.id == currentSongId,
+                                    isFavorite = song.id in favoriteIds,
+                                    onClick = {
+                                        viewModel.playSong(song)
+                                    },
+                                    onFavoriteClick = {
+                                        android.util.Log.d(
+                                            "JexFavorites",
+                                            "Favorite clicked: ${song.title}, ID: ${song.id}"
+                                        )
+
+                                        viewModel.toggleFavorite(song.id)
+                                    }
+                                )
+                            }
+                        }
                     }
+                }
+            }
+
+            // PESTAÑA 1: LISTAS
+            1 -> {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    if (!showFavoritesPlaylist) {
+                        Text(
+                            text = "Tus listas",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showFavoritesPlaylist = true
+                                },
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainer
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(20.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                JexSymbolIcon(
+                                    symbol = JexSymbol.Favorite,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(32.dp)
+                                )
+
+                                Spacer(modifier = Modifier.width(16.dp))
+
+                                Column {
+                                    Text(
+                                        text = "Favoritos",
+                                        style = MaterialTheme.typography.titleLarge
+                                    )
+
+                                    Text(
+                                        text = "${favoriteSongs.size} canciones",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "← Favoritos",
+                            style = MaterialTheme.typography.headlineSmall,
+                            modifier = Modifier
+                                .clickable {
+                                    showFavoritesPlaylist = false
+                                }
+                                .padding(bottom = 16.dp)
+                        )
+
+                        if (favoriteSongs.isEmpty()) {
+                            Text(
+                                text = "Todavía no tienes canciones favoritas.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        } else {
+                            LazyColumn {
+                                items(
+                                    favoriteSongs,
+                                    key = { it.id }
+                                ) { song ->
+                                    SongItem(
+                                        song = song,
+                                        isCurrent = song.id == currentSongId,
+                                        isFavorite = true,
+                                        onClick = {
+                                            viewModel.playSong(song)
+                                        },
+                                        onFavoriteClick = {
+                                            viewModel.toggleFavorite(song.id)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // PESTAÑA 2: CARPETAS
+            2 -> {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Tus carpetas de música",
+                        style = MaterialTheme.typography.titleLarge
+                    )
                 }
             }
         }
 
+        // MINIRREPRODUCTOR
+        // Se mantiene visible al cambiar de pestaña
         if (currentSong != null) {
             MiniPlayer(
                 song = currentSong,
                 isPlaying = isPlaying,
                 isShuffleEnabled = isShuffleEnabled,
                 repeatMode = repeatMode,
-                onPrevious = { viewModel.previousSong() },
-                onPlayPause = { viewModel.togglePlayPause() },
-                onNext = { viewModel.nextSong() },
-                onShuffle = { viewModel.toggleShuffle() },
-                onRepeat = { viewModel.toggleRepeat() },
+                onPrevious = {
+                    viewModel.previousSong()
+                },
+                onPlayPause = {
+                    viewModel.togglePlayPause()
+                },
+                onNext = {
+                    viewModel.nextSong()
+                },
+                onShuffle = {
+                    viewModel.toggleShuffle()
+                },
+                onRepeat = {
+                    viewModel.toggleRepeat()
+                },
                 onOpenPlayer = onOpenPlayer
             )
         }
 
-        JexBottomBar()
+        // BARRA DE NAVEGACIÓN INFERIOR
+        JexBottomBar(
+            selectedTab = selectedTab,
+            onTabSelected = {
+                selectedTab = it
+            }
+        )
     }
+
 }
 
 @Composable
@@ -449,7 +640,9 @@ private fun SongArtwork(
 private fun SongItem(
     song: Song,
     isCurrent: Boolean,
-    onClick: () -> Unit
+    isFavorite: Boolean,
+    onClick: () -> Unit,
+    onFavoriteClick: () -> Unit
 ) {
     Surface(
         modifier = Modifier
@@ -501,14 +694,40 @@ private fun SongItem(
             }
 
             Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                text = formatDuration(song.duration),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
+
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = formatDuration(song.duration),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                IconButton(
+                    onClick = onFavoriteClick,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    JexSymbolIcon(
+                        symbol = JexSymbol.Favorite,
+                        contentDescription = if (isFavorite) {
+                            "Quitar de favoritos"
+                        } else {
+                            "Agregar a favoritos"
+                        },
+                        tint = if (isFavorite) {
+                            androidx.compose.ui.graphics.Color(0xFFE57373)
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            } // Cierra Column del corazón
+        } // Cierra Row
+    } // Cierra Surface
+} // Cierra SongItem
 
 @Composable
 private fun EmptyLibrary(message: String) {
@@ -650,23 +869,38 @@ private fun PlayPauseButton(
 }
 
 @Composable
-private fun JexBottomBar() {
+private fun JexBottomBar(
+    selectedTab: Int,
+    onTabSelected: (Int) -> Unit
+) {
     val items = listOf(
-        BottomBarItem(JexSymbol.LibraryMusic, "Música", selected = true),
-        BottomBarItem(JexSymbol.QueueMusic, "Listas", selected = false),
-        BottomBarItem(JexSymbol.Favorite, "Favoritos", selected = false),
-        BottomBarItem(JexSymbol.Folder, "Carpetas", selected = false)
+        BottomBarItem(
+            JexSymbol.LibraryMusic,
+            "Música",
+            selected = selectedTab == 0
+        ),
+        BottomBarItem(
+            JexSymbol.QueueMusic,
+            "Listas",
+            selected = selectedTab == 1
+        ),
+        BottomBarItem(
+            JexSymbol.Folder,
+            "Carpetas",
+            selected = selectedTab == 2
+        )
     )
 
     NavigationBar(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 3.dp
     ) {
-        items.forEach { item ->
+        items.forEachIndexed { index, item ->
             NavigationBarItem(
                 selected = item.selected,
-                // Estos destinos siguen siendo etiquetas visuales hasta que exista su funcionalidad.
-                onClick = {},
+                onClick = {
+                    onTabSelected(index)
+                },
                 icon = {
                     JexSymbolIcon(
                         symbol = item.icon,
@@ -674,7 +908,9 @@ private fun JexBottomBar() {
                         modifier = Modifier.size(24.dp)
                     )
                 },
-                label = { Text(text = item.label) }
+                label = {
+                    Text(text = item.label)
+                }
             )
         }
     }
