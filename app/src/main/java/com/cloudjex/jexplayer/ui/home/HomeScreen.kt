@@ -399,7 +399,7 @@ private fun FavoritesPlaylist(
                         isCurrent = song.id == currentSongId,
                         isFavorite = true,
                         onClick = {
-                            viewModel.playSong(song, PlaybackContext.Favorites)
+                            viewModel.playSong(song, PlaybackContext.Favorites, favoriteSongs)
                         },
                         onFavoriteClick = {
                             viewModel.toggleFavorite(song.id)
@@ -473,7 +473,7 @@ private fun LibrarySongList(
                 song = song,
                 isCurrent = song.id == currentSongId,
                 isFavorite = song.id in favoriteIds,
-                onClick = { viewModel.playSong(song, PlaybackContext.Library) },
+                onClick = { viewModel.playSong(song, PlaybackContext.Library, filteredSongs) },
                 onFavoriteClick = { viewModel.toggleFavorite(song.id) },
                 onAddToLibraryClick = { onAddToLibrary(song) }
             )

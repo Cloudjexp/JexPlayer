@@ -1033,17 +1033,26 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playSong(song: Song) {
-        playSong(song, null)
+        playSong(song, null, null)
     }
 
-    fun playSong(song: Song, context: PlaybackContext?) {
+    /**
+     * Inicia la canción dentro de la secuencia desde la que se seleccionó.
+     * La secuencia se entrega a Media3 una sola vez; los botones siguiente y
+     * anterior navegan después por la cola del propio Player.
+     */
+    fun playSong(
+        song: Song,
+        context: PlaybackContext?,
+        queue: List<Song>? = null
+    ) {
         if (context != null) playbackContext = context
         if (playbackContext is PlaybackContext.Custom && !_customLibrariesReady.value) {
             return
         }
 
         val queueContext = playbackContext
-        val queueSongs = activeQueueSongs()
+        val queueSongs = queue ?: activeQueueSongs()
         if (song !in queueSongs) return
 
         _currentSongId.value = song.id
@@ -1055,7 +1064,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         cargarAudioTags(song)
 
         runOnController { controller ->
-            val songs = activeQueueSongs()
+            val songs = queue ?: activeQueueSongs()
             val startIndex = songs.indexOfFirst { it.id == song.id }
 
             if (startIndex >= 0) {
@@ -1090,7 +1099,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         return PlaybackQueue.songsFor(
             context = playbackContext,
-            library = canonicalSongs,
+            // _songs es la lista visible y ya respeta el orden elegido por el
+            // usuario. Las listas personalizadas sustituyen este orden con su
+            // propia secuencia persistida en PlaybackQueue.
+            library = _songs.value.ifEmpty { canonicalSongs },
             favoriteIds = _favoriteIds.value,
             customLibrarySongIds = customLibrarySongIds
         )
@@ -1251,12 +1263,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun navigateBy(offset: Int) {
-        PlaybackQueue.navigate(
-            songs = activeQueueSongs(),
-            currentSongId = _currentSongId.value,
-            offset = offset,
-            shuffle = _isShuffleEnabled.value
-        )?.let(::playSong)
+        runOnController { controller ->
+            if (controller.mediaItemCount == 0) return@runOnController
+            if (offset > 0) {
+                controller.seekToNextMediaItem()
+            } else {
+                controller.seekToPreviousMediaItem()
+            }
+        }
     }
 
     fun toggleFavorite(songId: String) {
@@ -1294,16 +1308,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
      * Repeat ONE lo maneja ExoPlayer de forma nativa (REPEAT_MODE_ONE).
      */
     private fun onSongCompleted() {
-        val songs = activeQueueSongs()
+        if (_repeatMode.value == RepeatMode.ONE) return
 
-        if (songs.isEmpty()) return
-
-        PlaybackQueue.automaticNext(
-            songs = songs,
-            currentSongId = _currentSongId.value,
-            repeatMode = _repeatMode.value,
-            shuffle = _isShuffleEnabled.value
-        )?.let(::playSong)
+        // La cola de Media3 es la fuente de verdad. No se vuelve a construir
+        // al terminar una canción, lo que también conserva el orden contextual
+        // de una carpeta, álbum o lista personalizada.
+        runOnController { controller ->
+            if (controller.mediaItemCount == 0) return@runOnController
+            if (_repeatMode.value == RepeatMode.OFF && !controller.hasNextMediaItem()) {
+                return@runOnController
+            }
+            controller.seekToNextMediaItem()
+            controller.prepare()
+            controller.play()
+        }
     }
 
     fun seekTo(position: Long) {

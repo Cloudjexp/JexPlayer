@@ -34,6 +34,18 @@ class PlaybackQueueTest {
     }
 
     @Test
+    fun contextualQueuesKeepTheirVisibleOrder() {
+        val artistOrder = listOf("laura-1", "laura-2", "other")
+        val albumOrder = listOf("album-1", "album-2", "album-3")
+        val folderOrder = listOf("folder-a", "folder-b")
+
+        assertEquals("laura-2", PlaybackQueue.navigateIds(artistOrder, "laura-1", 1, false))
+        assertEquals("laura-1", PlaybackQueue.navigateIds(artistOrder, "laura-2", -1, false))
+        assertEquals("album-3", PlaybackQueue.navigateIds(albumOrder, "album-2", 1, false))
+        assertEquals("folder-a", PlaybackQueue.navigateIds(folderOrder, "folder-b", -1, false))
+    }
+
+    @Test
     fun shuffleNeverLeavesFavorites() {
         val favorites = listOf("a", "c")
         repeat(20) {
