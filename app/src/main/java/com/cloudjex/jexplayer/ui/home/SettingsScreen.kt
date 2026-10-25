@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.platform.LocalContext
@@ -308,7 +309,12 @@ private fun AppearanceThemeOption(
             Surface(
                 modifier = Modifier.size(24.dp),
                 shape = CircleShape,
-                color = palette.primary,
+                color = if (theme == AppearanceTheme.DARK) Color.Black else palette.primary,
+                border = if (theme == AppearanceTheme.DARK) {
+                    BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                } else {
+                    null
+                },
                 content = {}
             )
             Text(

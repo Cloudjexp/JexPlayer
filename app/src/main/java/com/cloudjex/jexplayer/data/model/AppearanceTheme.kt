@@ -6,7 +6,7 @@ enum class AppearanceTheme(val storageKey: String, val label: String) {
     EMERALD_GREEN("emerald_green", "Verde Esmeralda"),
     AMBER("amber", "Ámbar"),
     RUBY_RED("ruby_red", "Rojo Rubí"),
-    DARK("dark", "Oscuro"),
+    DARK("dark", "Midnight"),
     SUBTLE_PINK("subtle_pink", "Rosa Sutil");
 
     companion object {
