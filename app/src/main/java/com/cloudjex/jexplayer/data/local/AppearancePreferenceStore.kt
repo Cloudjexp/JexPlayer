@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
+import com.cloudjex.jexplayer.data.model.AppearanceAccent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -18,12 +19,21 @@ internal class AppearancePreferenceStore(
         AppearanceTheme.fromStorageKey(preferences[THEME_KEY])
     }
 
+    val selectedAccent: Flow<AppearanceAccent> = dataStore.data.map { preferences ->
+        AppearanceAccent.fromStorageKey(preferences[ACCENT_KEY])
+    }
+
     suspend fun saveTheme(theme: AppearanceTheme) {
         dataStore.edit { preferences -> preferences[THEME_KEY] = theme.storageKey }
     }
 
+    suspend fun saveAccent(accent: AppearanceAccent) {
+        dataStore.edit { preferences -> preferences[ACCENT_KEY] = accent.storageKey }
+    }
+
     companion object {
         private val THEME_KEY = stringPreferencesKey("appearance_theme")
+        private val ACCENT_KEY = stringPreferencesKey("appearance_accent")
 
         fun from(context: Context): AppearancePreferenceStore =
             AppearancePreferenceStore(context.applicationContext.appearanceDataStore)

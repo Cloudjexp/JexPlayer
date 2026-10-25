@@ -91,8 +91,12 @@ class MainActivity : ComponentActivity() {
             val vm: MusicViewModel = viewModel()
             viewModel = vm
             val selectedTheme by vm.selectedAppearanceTheme.collectAsState()
+            val selectedAccent by vm.selectedAppearanceAccent.collectAsState()
 
-            JexPlayerTheme(theme = selectedTheme ?: AppearanceTheme.default) {
+            JexPlayerTheme(
+                theme = selectedTheme ?: AppearanceTheme.default,
+                accent = selectedAccent
+            ) {
                 if (selectedTheme == null) {
                     ScreenLoading()
                 } else {

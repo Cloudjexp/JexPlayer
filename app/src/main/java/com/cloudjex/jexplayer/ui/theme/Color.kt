@@ -2,6 +2,7 @@ package com.cloudjex.jexplayer.ui.theme
 
 import androidx.compose.ui.graphics.Color
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
+import com.cloudjex.jexplayer.data.model.AppearanceAccent
 
 /** Tokens semánticos de color; las pantallas deben consumir MaterialTheme.colorScheme. */
 data class JexPalette(
@@ -27,28 +28,31 @@ data class JexPalette(
     val outlineVariant: Color
 )
 
-fun paletteFor(theme: AppearanceTheme): JexPalette = when (theme) {
-    AppearanceTheme.MINIMALIST_GRAY -> JexPalette(
-        background = Color(0xFF111111),
-        surface = Color(0xFF242424),
-        surfaceElevated = Color(0xFF383838),
-        surfaceBright = Color(0xFF454545),
-        primary = Color(0xFFB5B5B5),
-        onPrimary = Color(0xFF171717),
-        primaryContainer = Color(0xFF3D3D3D),
-        onPrimaryContainer = Color(0xFFF2F2F2),
-        secondary = Color(0xFFA5A5A5),
-        onSecondary = Color(0xFF191919),
-        secondaryContainer = Color(0xFF343434),
-        onSecondaryContainer = Color(0xFFE6E6E6),
-        tertiary = Color(0xFFD0D0D0),
-        onTertiary = Color(0xFF202020),
-        tertiaryContainer = Color(0xFF3A3A3A),
-        onTertiaryContainer = Color(0xFFEDEDED),
-        textPrimary = Color(0xFFF2F2F2),
+fun paletteFor(
+    theme: AppearanceTheme,
+    accent: AppearanceAccent = AppearanceAccent.default
+): JexPalette = when (theme) {
+    AppearanceTheme.DARK -> JexPalette(
+        background = Color(0xFF000000),
+        surface = Color(0xFF111111),
+        surfaceElevated = Color(0xFF1A1A1A),
+        surfaceBright = Color(0xFF242424),
+        primary = accentTokensFor(accent).primary,
+        onPrimary = accentTokensFor(accent).onPrimary,
+        primaryContainer = accentTokensFor(accent).primaryContainer,
+        onPrimaryContainer = accentTokensFor(accent).onPrimaryContainer,
+        secondary = accentTokensFor(accent).secondary,
+        onSecondary = accentTokensFor(accent).onSecondary,
+        secondaryContainer = accentTokensFor(accent).secondaryContainer,
+        onSecondaryContainer = accentTokensFor(accent).onSecondaryContainer,
+        tertiary = accentTokensFor(accent).tertiary,
+        onTertiary = accentTokensFor(accent).onTertiary,
+        tertiaryContainer = accentTokensFor(accent).tertiaryContainer,
+        onTertiaryContainer = accentTokensFor(accent).onTertiaryContainer,
+        textPrimary = Color(0xFFF5F5F5),
         textSecondary = Color(0xFFBDBDBD),
-        outline = Color(0xFF9A9A9A),
-        outlineVariant = Color(0xFF565656)
+        outline = Color(0xFF8C8C8C),
+        outlineVariant = Color(0xFF3A3A3A)
     )
 
     AppearanceTheme.OCEAN_BLUE -> JexPalette(
@@ -164,5 +168,53 @@ fun paletteFor(theme: AppearanceTheme): JexPalette = when (theme) {
         textSecondary = Color(0xFFC9BBC2),
         outline = Color(0xFFA9959E),
         outlineVariant = Color(0xFF62505A)
+    )
+}
+
+private data class AccentTokens(
+    val primary: Color,
+    val onPrimary: Color,
+    val primaryContainer: Color,
+    val onPrimaryContainer: Color,
+    val secondary: Color,
+    val onSecondary: Color,
+    val secondaryContainer: Color,
+    val onSecondaryContainer: Color,
+    val tertiary: Color,
+    val onTertiary: Color,
+    val tertiaryContainer: Color,
+    val onTertiaryContainer: Color
+)
+
+private fun accentTokensFor(accent: AppearanceAccent): AccentTokens = when (accent) {
+    AppearanceAccent.OCEAN_BLUE -> AccentTokens(
+        Color(0xFF8BC9E8), Color(0xFF09202C), Color(0xFF234254), Color(0xFFD8EFF9),
+        Color(0xFFA9C1D0), Color(0xFF15242D), Color(0xFF30434F), Color(0xFFD8E7EF),
+        Color(0xFFB9C4E0), Color(0xFF20283B), Color(0xFF38445F), Color(0xFFE1E6F6)
+    )
+    AppearanceAccent.EMERALD_GREEN -> AccentTokens(
+        Color(0xFF8CD3A3), Color(0xFF0B2514), Color(0xFF244632), Color(0xFFD9F3E1),
+        Color(0xFFAFC9B5), Color(0xFF1B2B20), Color(0xFF344A3A), Color(0xFFDFEEE2),
+        Color(0xFFA6D0C2), Color(0xFF183129), Color(0xFF2D4A40), Color(0xFFD5EEE5)
+    )
+    AppearanceAccent.AMBER -> AccentTokens(
+        Color(0xFFE8C477), Color(0xFF2B2008), Color(0xFF4B3A1C), Color(0xFFF7E8C3),
+        Color(0xFFD3C19B), Color(0xFF302717), Color(0xFF483B26), Color(0xFFF0E4C9),
+        Color(0xFFE1B99A), Color(0xFF352317), Color(0xFF503927), Color(0xFFF4DECB)
+    )
+    AppearanceAccent.RUBY_RED -> AccentTokens(
+        Color(0xFFE99AA1), Color(0xFF321216), Color(0xFF51262C), Color(0xFFF9DDE0),
+        Color(0xFFD3AEB2), Color(0xFF332124), Color(0xFF493237), Color(0xFFF1DDE0),
+        Color(0xFFE2B6A6), Color(0xFF38251E), Color(0xFF50382F), Color(0xFFF5E0D8)
+    )
+    AppearanceAccent.MINIMALIST_GRAY -> AccentTokens(
+        Color(0xFFB5B5B5), Color(0xFF171717), Color(0xFF3D3D3D), Color(0xFFF2F2F2),
+        Color(0xFFA5A5A5), Color(0xFF191919), Color(0xFF343434), Color(0xFFE6E6E6),
+        Color(0xFFD0D0D0), Color(0xFF202020), Color(0xFF3A3A3A), Color(0xFFEDEDED)
+    )
+    AppearanceAccent.SUBTLE_PINK -> AccentTokens(
+        Color(0xFFDDB0C2), Color(0xFF30212A), Color(0xFF4A333F), Color(0xFFF4E1E9),
+        Color(0xFFCBB6C0), Color(0xFF30262C), Color(0xFF453640), Color(0xFFECDFE5),
+        Color(0xFFD9BDA8), Color(0xFF35291F), Color(0xFF4C3B2F), Color(0xFFF2E4D8)
     )
 }

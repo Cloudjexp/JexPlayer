@@ -8,13 +8,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
+import com.cloudjex.jexplayer.data.model.AppearanceAccent
 
 @Composable
 fun JexPlayerTheme(
     theme: AppearanceTheme = AppearanceTheme.default,
+    accent: AppearanceAccent = AppearanceAccent.default,
     content: @Composable () -> Unit
 ) {
-    val palette = paletteFor(theme)
+    val palette = paletteFor(theme, accent)
     val colorScheme = darkColorScheme(
         primary = palette.primary,
         onPrimary = palette.onPrimary,
