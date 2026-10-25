@@ -333,6 +333,7 @@ fun HomeScreen(
         libraryDialogSongId?.let { songId ->
             songs.firstOrNull { it.id == songId }?.let { song ->
                 AddToLibraryDialog(
+                    viewModel = viewModel,
                     song = song,
                     libraries = customLibraries,
                     librariesReady = customLibrariesReady,

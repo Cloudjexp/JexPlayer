@@ -614,6 +614,28 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    /**
+     * Crea una lista y añade la canción en una sola actualización de estado.
+     * Si el nombre no es válido, no se crea ninguna lista vacía.
+     */
+    fun createCustomLibraryWithSong(rawName: String, songId: String): Boolean {
+        if (!beginCustomLibraryEdit()) return false
+        if (songId.isBlank()) {
+            _libraryMessage.value = "No se pudo añadir la canción a la lista."
+            return false
+        }
+
+        return applyCustomLibraryEdit(
+            result = CustomLibraryRules.createWithSong(
+                libraries = _customLibraries.value,
+                id = UUID.randomUUID().toString(),
+                rawName = rawName,
+                songId = songId
+            ),
+            successMessage = "Lista creada: ${CustomLibraryRules.normalizeName(rawName)}"
+        )
+    }
+
     fun renameCustomLibrary(libraryId: String, rawName: String): Boolean {
         if (!beginCustomLibraryEdit()) return false
 

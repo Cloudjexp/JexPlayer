@@ -92,6 +92,43 @@ class CustomLibraryRulesTest {
     }
 
     @Test
+    fun createWithSongCreatesTheLibraryAlreadyContainingTheSong() {
+        val original = listOf(library("1", "Primera", listOf("a")))
+
+        val libraries = updated(
+            CustomLibraryRules.createWithSong(
+                libraries = original,
+                id = "2",
+                rawName = "  Para entrenar  ",
+                songId = "song-b"
+            )
+        )
+
+        assertEquals(listOf("1", "2"), libraries.map { it.id })
+        assertEquals("Para entrenar", libraries[1].name)
+        assertEquals(listOf("song-b"), libraries[1].songIds)
+        assertEquals(listOf("a"), original[0].songIds)
+    }
+
+    @Test
+    fun createWithSongRejectsInvalidNameWithoutCreatingAnEmptyLibrary() {
+        val original = listOf(library("1", "Rock"))
+
+        assertInvalidName(
+            CustomLibraryRules.createWithSong(
+                libraries = original,
+                id = "2",
+                rawName = "rock",
+                songId = "song-b"
+            ),
+            CustomLibraryNameError.Duplicate
+        )
+
+        assertEquals(listOf("1"), original.map { it.id })
+        assertEquals(listOf("Rock"), original.map { it.name })
+    }
+
+    @Test
     fun nameErrorReturnsNullForValidName() {
         assertNull(CustomLibraryRules.nameError(emptyList(), "Para entrenar"))
     }

@@ -317,12 +317,24 @@ fun CustomLibraryDetail(
 /** Diálogo global para marcar la pertenencia de una canción a varias listas. */
 @Composable
 fun AddToLibraryDialog(
+    viewModel: MusicViewModel,
     song: Song,
     libraries: List<CustomLibrary>,
     librariesReady: Boolean,
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    var showCreateDialog by rememberSaveable { mutableStateOf(false) }
+
+    if (showCreateDialog) {
+        CreateLibraryForSongDialog(
+            viewModel = viewModel,
+            song = song,
+            onDismiss = { showCreateDialog = false }
+        )
+        return
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Añadir a lista") },
@@ -344,7 +356,7 @@ fun AddToLibraryDialog(
                     )
 
                     libraries.isEmpty() -> Text(
-                        text = "Crea una lista primero.",
+                        text = "Todavía no tienes listas personalizadas.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -382,11 +394,79 @@ fun AddToLibraryDialog(
                         }
                     }
                 }
+
+                Spacer(Modifier.height(8.dp))
+
+                TextButton(
+                    onClick = { showCreateDialog = true },
+                    enabled = librariesReady
+                ) {
+                    Text("Crear nueva lista")
+                }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("Cerrar")
+            }
+        }
+    )
+}
+
+@Composable
+private fun CreateLibraryForSongDialog(
+    viewModel: MusicViewModel,
+    song: Song,
+    onDismiss: () -> Unit
+) {
+    val ready by viewModel.customLibrariesReady.collectAsState()
+    val libraries by viewModel.customLibraries.collectAsState()
+    var name by rememberSaveable(song.id) { mutableStateOf("") }
+    val error = remember(name, libraries, ready) {
+        viewModel.customLibraryNameError(name)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Crear nueva lista") },
+        text = {
+            Column {
+                Text(
+                    text = "Se creará la lista y se añadirá «${song.title}».",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("Nombre") },
+                    isError = error != null,
+                    supportingText = if (error != null) {
+                        { Text(customLibraryNameErrorText(error)) }
+                    } else {
+                        null
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (viewModel.createCustomLibraryWithSong(name, song.id)) {
+                        onDismiss()
+                    }
+                },
+                enabled = ready && name.isNotBlank() && error == null
+            ) {
+                Text("Crear y añadir")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancelar")
             }
         }
     )

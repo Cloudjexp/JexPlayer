@@ -79,6 +79,24 @@ object CustomLibraryRules {
         return CustomLibraryEditResult.Updated(libraries + library)
     }
 
+    /**
+     * Crea una biblioteca y la deja ya conteniendo [songId] en una sola
+     * operación. Si el nombre no es válido no se crea ninguna lista vacía.
+     *
+     * El llamador debe proporcionar un [songId] no vacío.
+     */
+    fun createWithSong(
+        libraries: List<CustomLibrary>,
+        id: String,
+        rawName: String,
+        songId: String
+    ): CustomLibraryEditResult {
+        val created = create(libraries, id, rawName)
+        if (created !is CustomLibraryEditResult.Updated) return created
+
+        return addSong(created.libraries, id, songId)
+    }
+
     fun rename(
         libraries: List<CustomLibrary>,
         libraryId: String,
