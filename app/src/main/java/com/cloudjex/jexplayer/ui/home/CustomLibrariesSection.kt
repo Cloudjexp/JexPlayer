@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import com.cloudjex.jexplayer.data.model.CustomLibrary
 import com.cloudjex.jexplayer.data.model.CustomLibraryNameError
 import com.cloudjex.jexplayer.data.model.Song
@@ -60,6 +61,7 @@ fun CustomLibrariesOverview(
     customLibraries: List<CustomLibrary>,
     customLibrariesReady: Boolean,
     libraryMessage: String?,
+    bottomContentPadding: Dp = 0.dp,
     onOpenFavorites: () -> Unit,
     onOpenLibrary: (String) -> Unit
 ) {
@@ -70,7 +72,12 @@ fun CustomLibrariesOverview(
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            top = 16.dp,
+            end = 16.dp,
+            bottom = 16.dp + bottomContentPadding
+        ),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
@@ -196,6 +203,7 @@ fun CustomLibraryDetail(
     songs: List<Song>,
     favoriteIds: Set<String>,
     currentSongId: String?,
+    bottomContentPadding: Dp = 0.dp,
     onBack: () -> Unit,
     onAddToLibrary: (Song) -> Unit
 ) {
@@ -293,7 +301,10 @@ fun CustomLibraryDetail(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-                contentPadding = PaddingValues(vertical = 8.dp),
+                contentPadding = PaddingValues(
+                    top = 8.dp,
+                    bottom = bottomContentPadding + 8.dp
+                ),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(librarySongs, key = { it.id }) { song ->

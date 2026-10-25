@@ -6,13 +6,20 @@ enum class AppearanceTheme(val storageKey: String, val label: String) {
     EMERALD_GREEN("emerald_green", "Verde Esmeralda"),
     AMBER("amber", "Ámbar"),
     RUBY_RED("ruby_red", "Rojo Rubí"),
-    MINIMALIST_GRAY("minimalist_gray", "Gris Minimalista"),
+    DARK("dark", "Midnight"),
     SUBTLE_PINK("subtle_pink", "Rosa Sutil");
 
     companion object {
-        val default: AppearanceTheme = MINIMALIST_GRAY
+        private const val LEGACY_MINIMALIST_GRAY = "minimalist_gray"
+        private const val LEGACY_AMOLED_BLACK = "amoled_black"
+
+        val default: AppearanceTheme = DARK
 
         fun fromStorageKey(value: String?): AppearanceTheme =
-            entries.firstOrNull { it.storageKey == value } ?: default
+            entries.firstOrNull { it.storageKey == value }
+                ?: when (value) {
+                    LEGACY_MINIMALIST_GRAY, LEGACY_AMOLED_BLACK -> DARK
+                    else -> default
+                }
     }
 }

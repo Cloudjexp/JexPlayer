@@ -18,6 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
+import com.cloudjex.jexplayer.data.model.AppearanceAccent
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
@@ -58,6 +62,7 @@ fun SettingsScreen(
     val message by viewModel.folderMessage.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val selectedTheme by viewModel.selectedAppearanceTheme.collectAsState()
+    val selectedAccent by viewModel.selectedAppearanceAccent.collectAsState()
     val isCheckingUpdates by viewModel.isCheckingUpdates.collectAsState()
     val updateMessage by viewModel.updateMessage.collectAsState()
     var folderToRemove by remember { mutableStateOf<MusicFolder?>(null) }
@@ -177,6 +182,12 @@ fun SettingsScreen(
                     selected = selectedTheme == theme,
                     onSelect = { viewModel.setAppearanceTheme(theme) }
                 )
+                if (theme == AppearanceTheme.DARK && selectedTheme == AppearanceTheme.DARK) {
+                    DarkAccentSelector(
+                        selectedAccent = selectedAccent,
+                        onAccentSelected = viewModel::setAppearanceAccent
+                    )
+                }
             }
         }
 
@@ -216,6 +227,37 @@ fun SettingsScreen(
             }
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun DarkAccentSelector(
+    selectedAccent: AppearanceAccent,
+    onAccentSelected: (AppearanceAccent) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        TextButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Color de acento: ${selectedAccent.label}")
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            AppearanceAccent.entries.forEach { accent ->
+                DropdownMenuItem(
+                    text = { Text(accent.label) },
+                    onClick = {
+                        onAccentSelected(accent)
+                        expanded = false
+                    }
+                )
+            }
+        }
     }
 }
 
@@ -267,7 +309,12 @@ private fun AppearanceThemeOption(
             Surface(
                 modifier = Modifier.size(24.dp),
                 shape = CircleShape,
-                color = palette.primary,
+                color = if (theme == AppearanceTheme.DARK) Color.Black else palette.primary,
+                border = if (theme == AppearanceTheme.DARK) {
+                    BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                } else {
+                    null
+                },
                 content = {}
             )
             Text(

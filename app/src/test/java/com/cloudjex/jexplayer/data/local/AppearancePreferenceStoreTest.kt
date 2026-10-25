@@ -4,6 +4,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
+import com.cloudjex.jexplayer.data.model.AppearanceAccent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,10 +27,10 @@ class AppearancePreferenceStoreTest {
     }
 
     @Test
-    fun defaultsToMinimalistGray() = runBlocking {
+    fun defaultsToDark() = runBlocking {
         val file = File.createTempFile("appearance", ".preferences_pb").apply { delete() }
         try {
-            assertEquals(AppearanceTheme.MINIMALIST_GRAY, newStore(file).selectedTheme.first())
+            assertEquals(AppearanceTheme.DARK, newStore(file).selectedTheme.first())
         } finally {
             scope?.cancel()
         }
@@ -48,7 +49,33 @@ class AppearancePreferenceStoreTest {
     }
 
     @Test
-    fun fallsBackToMinimalistGrayForUnknownThemeKey() {
-        assertEquals(AppearanceTheme.MINIMALIST_GRAY, AppearanceTheme.fromStorageKey("unknown"))
+    fun defaultsToAmberAccentAndPersistsSelectedAccent() = runBlocking {
+        val file = File.createTempFile("appearance", ".preferences_pb").apply { delete() }
+        try {
+            val store = newStore(file)
+            assertEquals(AppearanceAccent.AMBER, store.selectedAccent.first())
+            store.saveAccent(AppearanceAccent.OCEAN_BLUE)
+            assertEquals(AppearanceAccent.OCEAN_BLUE, store.selectedAccent.first())
+        } finally {
+            scope?.cancel()
+        }
+    }
+
+    @Test
+    fun fallsBackToDarkForUnknownThemeKey() {
+        assertEquals(AppearanceTheme.DARK, AppearanceTheme.fromStorageKey("unknown"))
+    }
+
+    @Test
+    fun migratesLegacyThemeKeysToDark() {
+        assertEquals(AppearanceTheme.DARK, AppearanceTheme.fromStorageKey("minimalist_gray"))
+        assertEquals(AppearanceTheme.DARK, AppearanceTheme.fromStorageKey("amoled_black"))
+    }
+
+    @Test
+    fun everyThemeStorageKeyRoundTrips() {
+        AppearanceTheme.entries.forEach { theme ->
+            assertEquals(theme, AppearanceTheme.fromStorageKey(theme.storageKey))
+        }
     }
 }

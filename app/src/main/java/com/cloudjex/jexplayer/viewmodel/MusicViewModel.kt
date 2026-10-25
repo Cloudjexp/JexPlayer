@@ -26,6 +26,7 @@ import com.cloudjex.jexplayer.data.model.AudioTags
 import com.cloudjex.jexplayer.data.model.AudioTechnicalInfo
 import com.cloudjex.jexplayer.data.model.SongAudioTechnicalInfo
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
+import com.cloudjex.jexplayer.data.model.AppearanceAccent
 import com.cloudjex.jexplayer.data.model.CachedSong
 import com.cloudjex.jexplayer.data.model.CustomLibrary
 import com.cloudjex.jexplayer.data.model.CustomLibraryEditResult
@@ -246,6 +247,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val selectedAppearanceTheme: StateFlow<AppearanceTheme?> =
         _selectedAppearanceTheme.asStateFlow()
 
+    private val _selectedAppearanceAccent = MutableStateFlow(AppearanceAccent.default)
+    val selectedAppearanceAccent: StateFlow<AppearanceAccent> =
+        _selectedAppearanceAccent.asStateFlow()
+
     /** Caché en memoria por canción para no releer el archivo en cada visita. */
     private val audioTagsCache = mutableMapOf<String, AudioTags?>()
 
@@ -349,6 +354,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 appearancePreferences.selectedTheme.first()
             } catch (_: IOException) {
                 AppearanceTheme.default
+            }
+        }
+
+        viewModelScope.launch {
+            _selectedAppearanceAccent.value = try {
+                appearancePreferences.selectedAccent.first()
+            } catch (_: IOException) {
+                AppearanceAccent.default
             }
         }
 
@@ -619,6 +632,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (_selectedAppearanceTheme.value == theme) return
         _selectedAppearanceTheme.value = theme
         viewModelScope.launch { appearancePreferences.saveTheme(theme) }
+    }
+
+    /** Aplica y persiste el acento de la paleta Oscuro inmediatamente. */
+    fun setAppearanceAccent(accent: AppearanceAccent) {
+        if (_selectedAppearanceAccent.value == accent) return
+        _selectedAppearanceAccent.value = accent
+        viewModelScope.launch { appearancePreferences.saveAccent(accent) }
     }
 
     /**

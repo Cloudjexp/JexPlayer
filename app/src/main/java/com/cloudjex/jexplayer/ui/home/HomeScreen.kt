@@ -60,6 +60,7 @@ import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.data.model.LibrarySortSettings
@@ -153,6 +154,11 @@ fun HomeScreen(
     Box(
         modifier = Modifier.fillMaxSize()
     ) {
+        var floatingContentHeightPx by remember { mutableStateOf(0) }
+        val floatingContentHeight = with(LocalDensity.current) {
+            floatingContentHeightPx.toDp()
+        }
+
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
@@ -242,6 +248,7 @@ fun HomeScreen(
                             viewModel = viewModel,
                             listState = listState,
                             pendingFollowId = pendingFollowId,
+                            bottomContentPadding = floatingContentHeight,
                             onPendingFollowHandled = onPendingFollowHandled,
                             onAddToLibrary = { song ->
                                 libraryDialogSongId = song.id
@@ -267,6 +274,7 @@ fun HomeScreen(
                             favoriteIds = favoriteIds,
                             currentSongId = currentSongId,
                             onBack = { selectedLibraryId = null },
+                            bottomContentPadding = floatingContentHeight,
                             onAddToLibrary = { song ->
                                 libraryDialogSongId = song.id
                             }
@@ -280,6 +288,7 @@ fun HomeScreen(
                             favoriteSongs = favoriteSongs,
                             currentSongId = currentSongId,
                             onBack = { showFavoritesPlaylist = false },
+                            bottomContentPadding = floatingContentHeight,
                             onAddToLibrary = { song ->
                                 libraryDialogSongId = song.id
                             }
@@ -295,6 +304,7 @@ fun HomeScreen(
                             customLibraries = customLibraries,
                             customLibrariesReady = customLibrariesReady,
                             libraryMessage = libraryMessage,
+                            bottomContentPadding = floatingContentHeight,
                             onOpenFavorites = {
                                 selectedLibraryId = null
                                 showFavoritesPlaylist = true
@@ -329,6 +339,7 @@ fun HomeScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .onSizeChanged { floatingContentHeightPx = it.height }
         ) {
             MiniPlayerHost(songs = songs, viewModel = viewModel, onOpenPlayer = onOpenPlayer)
 
@@ -371,6 +382,7 @@ private fun FavoritesPlaylist(
     viewModel: MusicViewModel,
     favoriteSongs: List<Song>,
     currentSongId: String?,
+    bottomContentPadding: Dp,
     onBack: () -> Unit,
     onAddToLibrary: (Song) -> Unit
 ) {
@@ -393,7 +405,12 @@ private fun FavoritesPlaylist(
                 style = MaterialTheme.typography.bodyMedium
             )
         } else {
-            LazyColumn {
+            LazyColumn(
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    top = 0.dp,
+                    bottom = bottomContentPadding + 8.dp
+                )
+            ) {
                 items(
                     favoriteSongs,
                     key = { it.id }
@@ -424,6 +441,7 @@ private fun LibrarySongList(
     favoriteIds: Set<String>,
     viewModel: MusicViewModel,
     listState: LazyListState,
+    bottomContentPadding: Dp,
     pendingFollowId: String?,
     onPendingFollowHandled: (String) -> Unit,
     onAddToLibrary: (Song) -> Unit
@@ -466,7 +484,10 @@ private fun LibrarySongList(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         state = listState,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp)
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            top = 8.dp,
+            bottom = bottomContentPadding + 8.dp
+        )
     ) {
         items(
             items = filteredSongs,
