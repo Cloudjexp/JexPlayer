@@ -10,6 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.MarqueeAnimationMode
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -33,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -76,7 +80,9 @@ import com.cloudjex.jexplayer.viewmodel.AudioTagsLoadState
 @Composable
 fun PlayerScreen(
     viewModel: MusicViewModel,
-    onBack: () -> Unit
+    selectedTab: Int,
+    onBack: () -> Unit,
+    onTabSelected: (Int) -> Unit
 ) {
     val songs by viewModel.songs.collectAsState()
     val currentSongId by viewModel.currentSongId.collectAsState()
@@ -103,40 +109,47 @@ fun PlayerScreen(
                 .navigationBarsPadding()
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            PlayerTopBar(onBack = onBack)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                PlayerTopBar(onBack = onBack)
 
-            if (currentSong == null) {
-                PlayerEmptyState(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                )
-            } else {
-                val technicalInfo = currentSongAudioTechnicalInfo.forSong(currentSong.id)
-                    ?: audioTags.takeIf {
-                        audioTagsLoadState == AudioTagsLoadState.LOADED
-                    }?.let(AudioTechnicalInfo::from)
+                if (currentSong == null) {
+                    PlayerEmptyState(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    )
+                } else {
+                    val technicalInfo = currentSongAudioTechnicalInfo.forSong(currentSong.id)
+                        ?: audioTags.takeIf {
+                            audioTagsLoadState == AudioTagsLoadState.LOADED
+                        }?.let(AudioTechnicalInfo::from)
 
-                PlayerContent(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    song = currentSong,
-                    isPlaying = isPlaying,
-                    isShuffleEnabled = isShuffleEnabled,
-                    repeatMode = repeatMode,
-                    currentPosition = currentPosition,
-                    duration = duration,
-                    audioTechnicalInfo = technicalInfo,
-                    onPrevious = { viewModel.previousSong() },
-                    onPlayPause = { viewModel.togglePlayPause() },
-                    onNext = { viewModel.nextSong() },
-                    onShuffle = { viewModel.toggleShuffle() },
-                    onRepeat = { viewModel.toggleRepeat() },
-                    onSeek = { viewModel.seekTo(it) },
-                    onArtworkClick = { showLyrics = true } // <-- Activamos la apertura aquí
-                )
+                    PlayerContent(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        song = currentSong,
+                        isPlaying = isPlaying,
+                        isShuffleEnabled = isShuffleEnabled,
+                        repeatMode = repeatMode,
+                        currentPosition = currentPosition,
+                        duration = duration,
+                        audioTechnicalInfo = technicalInfo,
+                        onPrevious = { viewModel.previousSong() },
+                        onPlayPause = { viewModel.togglePlayPause() },
+                        onNext = { viewModel.nextSong() },
+                        onShuffle = { viewModel.toggleShuffle() },
+                        onRepeat = { viewModel.toggleRepeat() },
+                        onSeek = { viewModel.seekTo(it) },
+                        onArtworkClick = { showLyrics = true }
+                    )
+                }
             }
+
         }
 
         // Si showLyrics es true, se dibuja encima cubriendo toda la pantalla
@@ -224,26 +237,37 @@ private fun PlayerContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(64.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = song.title,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        textAlign = TextAlign.Center,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    key(song.title) {
+                        Text(
+                            text = song.title,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Clip,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(
+                                    iterations = Int.MAX_VALUE,
+                                    animationMode = MarqueeAnimationMode.Immediately,
+                                    initialDelayMillis = 900,
+                                    repeatDelayMillis = 700,
+                                    velocity = 28.dp
+                                )
+                        )
+                    }
                 }
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(24.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(20.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -257,9 +281,9 @@ private fun PlayerContent(
                     )
                 }
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(20.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(18.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     if (song.album.isNotBlank()) {
@@ -506,11 +530,16 @@ private fun PlayerControls(
     onRepeat: () -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 24.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = onShuffle) {
+        IconButton(
+            onClick = onShuffle,
+            modifier = Modifier.size(56.dp)
+        ) {
             JexSymbolIcon(
                 symbol = JexSymbol.Shuffle,
                 contentDescription = "Aleatorio",
@@ -519,16 +548,19 @@ private fun PlayerControls(
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(30.dp)
             )
         }
 
-        IconButton(onClick = onPrevious) {
+        IconButton(
+            onClick = onPrevious,
+            modifier = Modifier.size(56.dp)
+        ) {
             JexSymbolIcon(
                 symbol = JexSymbol.SkipPrevious,
                 contentDescription = "Anterior",
                 tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(34.dp)
+                modifier = Modifier.size(42.dp)
             )
         }
 
@@ -544,20 +576,28 @@ private fun PlayerControls(
                 symbol = if (isPlaying) JexSymbol.Pause else JexSymbol.PlayArrow,
                 contentDescription = if (isPlaying) "Pausar" else "Reproducir",
                 tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier
+                    .size(36.dp)
+                    .then(if (isPlaying) Modifier else Modifier.offset(x = (-1).dp))
             )
         }
 
-        IconButton(onClick = onNext) {
+        IconButton(
+            onClick = onNext,
+            modifier = Modifier.size(56.dp)
+        ) {
             JexSymbolIcon(
                 symbol = JexSymbol.SkipNext,
                 contentDescription = "Siguiente",
                 tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(34.dp)
+                modifier = Modifier.size(42.dp)
             )
         }
 
-        IconButton(onClick = onRepeat) {
+        IconButton(
+            onClick = onRepeat,
+            modifier = Modifier.size(56.dp)
+        ) {
             JexSymbolIcon(
                 symbol = if (repeatMode == RepeatMode.ONE) {
                     JexSymbol.RepeatOne
@@ -570,7 +610,7 @@ private fun PlayerControls(
                 } else {
                     MaterialTheme.colorScheme.primary
                 },
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(30.dp)
             )
         }
     }

@@ -112,7 +112,8 @@ class MainActivity : ComponentActivity() {
                      )
                      var pendingLibraryFollowId by remember { mutableStateOf<String?>(null) }
                      var lastObservedSongId by remember { mutableStateOf(currentSongId) }
-                     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+                      var settingsOpen by rememberSaveable { mutableStateOf(false) }
+                      var selectedTab by rememberSaveable { mutableStateOf(0) }
 
                      // Se escribe solo cuando la posición se estabiliza. La lista puede
                      // estar desmontada al abrir el reproductor, pero su estado sigue
@@ -240,11 +241,18 @@ class MainActivity : ComponentActivity() {
                                     if (playerOpen) {
                                         PlayerScreen(
                                             viewModel = vm,
-                                            onBack = { vm.setShowPlayer(false) }
+                                            selectedTab = selectedTab,
+                                            onBack = { vm.setShowPlayer(false) },
+                                            onTabSelected = {
+                                                selectedTab = it
+                                                vm.setShowPlayer(false)
+                                            }
                                         )
                                     } else {
                                         HomeScreen(
                                             viewModel = vm,
+                                            selectedTab = selectedTab,
+                                            onTabSelected = { selectedTab = it },
                                             listState = libraryListState,
                                             pendingFollowId = pendingLibraryFollowId,
                                             onPendingFollowHandled = { songId ->

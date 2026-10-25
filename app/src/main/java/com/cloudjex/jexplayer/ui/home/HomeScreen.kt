@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,8 +26,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.DropdownMenu
@@ -72,10 +68,13 @@ import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import com.cloudjex.jexplayer.viewmodel.PlaybackContext
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
+import com.cloudjex.jexplayer.ui.navigation.JexBottomBar
 
 @Composable
 fun HomeScreen(
     viewModel: MusicViewModel,
+    selectedTab: Int,
+    onTabSelected: (Int) -> Unit,
     listState: LazyListState = rememberLazyListState(),
     pendingFollowId: String? = null,
     onPendingFollowHandled: (String) -> Unit = {},
@@ -109,9 +108,6 @@ fun HomeScreen(
     var selectedLibraryId by rememberSaveable { mutableStateOf<String?>(null) }
     var libraryDialogSongId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedFolderUri by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedTab by rememberSaveable {
-        mutableStateOf(0)
-    }
     var showSortDialog by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(customLibraries, customLibrariesReady, selectedLibraryId) {
@@ -154,14 +150,15 @@ fun HomeScreen(
         song.id in favoriteIds
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+    Box(
+        modifier = Modifier.fillMaxSize()
     ) {
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
 
-        // Cambia el contenido según la pestaña seleccionada
-        when (selectedTab) {
+            // Cambia el contenido según la pestaña seleccionada
+            when (selectedTab) {
 
             // PESTAÑA 0: MÚSICA
             0 -> {
@@ -325,17 +322,22 @@ fun HomeScreen(
                     )
                 }
             }
+            }
         }
 
-        MiniPlayerHost(songs = songs, viewModel = viewModel, onOpenPlayer = onOpenPlayer)
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+        ) {
+            MiniPlayerHost(songs = songs, viewModel = viewModel, onOpenPlayer = onOpenPlayer)
 
-        // BARRA DE NAVEGACIÓN INFERIOR
-        JexBottomBar(
-            selectedTab = selectedTab,
-            onTabSelected = {
-                selectedTab = it
-            }
-        )
+            // BARRA DE NAVEGACIÓN INFERIOR
+            JexBottomBar(
+                selectedTab = selectedTab,
+                onTabSelected = onTabSelected
+            )
+        }
 
         libraryDialogSongId?.let { songId ->
             songs.firstOrNull { it.id == songId }?.let { song ->
@@ -985,7 +987,7 @@ private fun MiniPlayer(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 2.dp),
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 2.dp
@@ -1090,67 +1092,6 @@ private fun PlayPauseButton(
         )
     }
 }
-
-@Composable
-private fun JexBottomBar(
-    selectedTab: Int,
-    onTabSelected: (Int) -> Unit
-) {
-    val items = listOf(
-        BottomBarItem(
-            JexSymbol.LibraryMusic,
-            "Música",
-            selected = selectedTab == 0
-        ),
-        BottomBarItem(
-            JexSymbol.QueueMusic,
-            "Listas",
-            selected = selectedTab == 1
-        ),
-        BottomBarItem(
-            JexSymbol.Folder,
-            "Carpetas",
-            selected = selectedTab == 2
-        )
-    )
-
-    NavigationBar(
-        modifier = Modifier
-            .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(28.dp)),
-        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 3.dp,
-        // El inset se aplica al contenedor exterior para que la isla quede
-        // completamente por encima de la navegación del sistema.
-        windowInsets = WindowInsets(0, 0, 0, 0)
-    ) {
-        items.forEachIndexed { index, item ->
-            NavigationBarItem(
-                selected = item.selected,
-                onClick = {
-                    onTabSelected(index)
-                },
-                icon = {
-                    JexSymbolIcon(
-                        symbol = item.icon,
-                        contentDescription = item.label,
-                        modifier = Modifier.size(24.dp)
-                    )
-                },
-                label = {
-                    Text(text = item.label)
-                }
-            )
-        }
-    }
-}
-
-private data class BottomBarItem(
-    val icon: JexSymbol,
-    val label: String,
-    val selected: Boolean
-)
 
 private fun formatDuration(durationMs: Long): String {
     val totalSeconds = durationMs / 1000
