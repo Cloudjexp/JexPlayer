@@ -64,6 +64,7 @@ import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
+import com.cloudjex.jexplayer.viewmodel.PlaybackContext
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
 
@@ -288,7 +289,7 @@ fun HomeScreen(
                                         isCurrent = song.id == currentSongId,
                                         isFavorite = true,
                                         onClick = {
-                                            viewModel.playSong(song)
+                                            viewModel.playSong(song, PlaybackContext.Favorites)
                                         },
                                         onFavoriteClick = {
                                             viewModel.toggleFavorite(song.id)
@@ -388,7 +389,7 @@ private fun LibrarySongList(
                 song = song,
                 isCurrent = song.id == currentSongId,
                 isFavorite = song.id in favoriteIds,
-                onClick = { viewModel.playSong(song) },
+                onClick = { viewModel.playSong(song, PlaybackContext.Library) },
                 onFavoriteClick = { viewModel.toggleFavorite(song.id) }
             )
         }

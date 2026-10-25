@@ -93,6 +93,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var audioTagsRequestedSongId: String? = null
     private val audioTechnicalInfoCache = ConcurrentHashMap<String, AudioTechnicalInfo>()
     private var playbackRestored = false
+    private var playbackContext: PlaybackContext = PlaybackContext.Library
 
     private var cachedEntries: List<CachedSong> = emptyList()
     private var cacheLoaded = false
@@ -111,7 +112,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val songId = mediaItem?.mediaId ?: return
             _currentSongId.value = songId
             _currentPosition.value = 0L
-            (_songs.value.find { it.id == songId } ?: mediaItem?.toSongFallback())?.let { song ->
+            (activeQueueSongs().find { it.id == songId }
+                ?: _songs.value.find { it.id == songId }
+                ?: mediaItem?.toSongFallback())?.let { song ->
                 _restoredSong.value = song
                 lastSongStore.save(song, 0L)
                 _duration.value = song.duration
@@ -253,7 +256,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         "ViewModel received favorites: ${ids.size}"
                     )
 
+                    val changed = _favoriteIds.value != ids
                     _favoriteIds.value = ids
+                    controller?.let(::inferPlaybackContext)
+                    if (changed && playbackContext == PlaybackContext.Favorites) {
+                        syncActiveQueue()
+                    }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -325,6 +333,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
      * No crea una nueva instancia ni reinicia la reproducción.
      */
     private fun syncStateFromController(controller: MediaController) {
+        inferPlaybackContext(controller)
         controller.currentMediaItem?.mediaId?.let { songId ->
             playbackRestored = true
             _currentSongId.value = songId
@@ -351,12 +360,28 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Si el servicio quedó vivo al cerrar la Activity, su cola es la fuente de
+     * verdad. Esto permite volver a conectar controles externos sin reemplazar
+     * una cola de Favoritos por la biblioteca.
+     */
+    private fun inferPlaybackContext(controller: MediaController) {
+        if (controller.mediaItemCount == 0) return
+        val ids = (0 until controller.mediaItemCount).map {
+            controller.getMediaItemAt(it).mediaId
+        }
+        val favoriteIds = _favoriteIds.value
+        if (ids.all { it in favoriteIds } && ids.size <= favoriteIds.size) {
+            playbackContext = PlaybackContext.Favorites
+        }
+    }
+
     /** Prepara la última canción guardada sin iniciar la reproducción. */
     private fun restorePlaybackIfNeeded(controller: MediaController) {
         if (playbackRestored) return
 
         val saved = restoredLastSong ?: return
-        val songs = _songs.value
+        val songs = activeQueueSongs()
         if (songs.isEmpty()) return
 
         val targetIndex = findMediaIdIndex(songs.map { it.id }, saved.song.id)
@@ -489,6 +514,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun updateLibrary(folders: List<Uri>) {
         if (folders.isEmpty()) {
             _songs.value = emptyList()
+            syncActiveQueue()
             _isScanning.value = false
             if (cacheLoaded && cachedEntries.isNotEmpty()) {
                 cachedEntries = emptyList()
@@ -515,6 +541,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }.distinctBy { it.id }
 
         _songs.value = merged.map { it.toSong() }
+        syncActiveQueue()
         _isScanning.value = false
 
         val restoredId = _currentSongId.value
@@ -689,6 +716,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playSong(song: Song) {
+        playSong(song, null)
+    }
+
+    fun playSong(song: Song, context: PlaybackContext?) {
+        if (context != null) playbackContext = context
+        val queueSongs = activeQueueSongs()
+        if (song !in queueSongs) return
+
         _currentSongId.value = song.id
         _restoredSong.value = song
         _currentPosition.value = 0L
@@ -698,7 +733,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         cargarAudioTags(song)
 
         runOnController { controller ->
-            val songs = _songs.value
+            val songs = activeQueueSongs()
             val startIndex = songs.indexOfFirst { it.id == song.id }
 
             if (startIndex >= 0) {
@@ -720,6 +755,41 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             controller.play()
+        }
+    }
+
+    private fun activeQueueSongs(): List<Song> = PlaybackQueue.songsFor(
+        playbackContext,
+        _songs.value,
+        _favoriteIds.value
+    )
+
+    /** Actualiza Media3 solo cuando la lista contextual cambió. */
+    private fun syncActiveQueue() {
+        runOnController { controller ->
+            val songs = activeQueueSongs()
+            if (controllerHasQueue(controller, songs)) return@runOnController
+
+            val currentId = controller.currentMediaItem?.mediaId ?: _currentSongId.value
+            val currentIndex = songs.indexOfFirst { it.id == currentId }
+            if (songs.isEmpty() || currentIndex < 0) {
+                controller.clearMediaItems()
+                controller.pause()
+                _currentSongId.value = null
+                _restoredSong.value = null
+                lastSongStore.clear()
+                return@runOnController
+            }
+
+            val wasPlaying = controller.isPlaying || controller.playWhenReady
+            val position = controller.currentPosition.coerceAtLeast(0L)
+            controller.setMediaItems(songs.map { it.toMediaItem() }, currentIndex, position)
+            controller.shuffleModeEnabled = _isShuffleEnabled.value
+            controller.repeatMode = if (_repeatMode.value == RepeatMode.ONE) {
+                Player.REPEAT_MODE_ONE
+            } else Player.REPEAT_MODE_OFF
+            controller.prepare()
+            controller.playWhenReady = wasPlaying
         }
     }
 
@@ -793,21 +863,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun navigateBy(offset: Int) {
-        val songs = _songs.value
-
-        if (songs.isEmpty()) return
-
-        if (_isShuffleEnabled.value) {
-            playRandomOtherThan(_currentSongId.value, songs)
-            return
-        }
-
-        val currentIndex = songs.indexOfFirst { it.id == _currentSongId.value }
-
-        if (currentIndex == -1) return
-
-        val targetIndex = (currentIndex + offset + songs.size) % songs.size
-        playSong(songs[targetIndex])
+        PlaybackQueue.navigate(
+            songs = activeQueueSongs(),
+            currentSongId = _currentSongId.value,
+            offset = offset,
+            shuffle = _isShuffleEnabled.value
+        )?.let(::playSong)
     }
 
     fun toggleFavorite(songId: String) {
@@ -840,43 +901,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun playRandomOtherThan(currentSongId: String?, songs: List<Song>) {
-        val candidates = songs.filter { it.id != currentSongId }
-
-        val nextSong = candidates.ifEmpty { songs }.random()
-
-        playSong(nextSong)
-    }
-
     /**
      * Avance automático al terminar una canción (STATE_ENDED), respetando Repeat.
      * Repeat ONE lo maneja ExoPlayer de forma nativa (REPEAT_MODE_ONE).
      */
     private fun onSongCompleted() {
-        val songs = _songs.value
+        val songs = activeQueueSongs()
 
         if (songs.isEmpty()) return
 
-        when (_repeatMode.value) {
-            RepeatMode.ONE -> Unit
-
-            // ALL: avanza de forma circular (o aleatoria si Shuffle está activo).
-            RepeatMode.ALL -> nextSong()
-
-            // OFF: avanza hasta la última canción y se detiene al alcanzarla.
-            RepeatMode.OFF -> {
-                if (_isShuffleEnabled.value) {
-                    // Con Shuffle no hay un "final" lineal: se mantiene el salto aleatorio.
-                    nextSong()
-                } else {
-                    val currentIndex = songs.indexOfFirst { it.id == _currentSongId.value }
-
-                    if (currentIndex != -1 && currentIndex < songs.lastIndex) {
-                        playSong(songs[currentIndex + 1])
-                    }
-                }
-            }
-        }
+        PlaybackQueue.automaticNext(
+            songs = songs,
+            currentSongId = _currentSongId.value,
+            repeatMode = _repeatMode.value,
+            shuffle = _isShuffleEnabled.value
+        )?.let(::playSong)
     }
 
     fun seekTo(position: Long) {
