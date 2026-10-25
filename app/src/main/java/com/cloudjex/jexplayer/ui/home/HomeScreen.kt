@@ -64,6 +64,7 @@ import coil3.request.ImageRequest
 import androidx.compose.ui.platform.LocalDensity
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
+import com.cloudjex.jexplayer.data.model.LibrarySortSettings
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import com.cloudjex.jexplayer.viewmodel.PlaybackContext
@@ -95,6 +96,7 @@ fun HomeScreen(
     val customLibraries by viewModel.customLibraries.collectAsState()
     val customLibrariesReady by viewModel.customLibrariesReady.collectAsState()
     val libraryMessage by viewModel.libraryMessage.collectAsState()
+    val librarySortSettings by viewModel.librarySortSettings.collectAsState()
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var isSearchVisible by rememberSaveable { mutableStateOf(false) }
@@ -108,6 +110,7 @@ fun HomeScreen(
     var selectedTab by rememberSaveable {
         mutableStateOf(0)
     }
+    var showSortDialog by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(customLibraries, customLibrariesReady, selectedLibraryId) {
         if (customLibrariesReady &&
@@ -191,7 +194,9 @@ fun HomeScreen(
                     filtersVisible = showFilters,
                     onToggleFilters = {
                         showFilters = !showFilters
-                    }
+                    },
+                    sortSettings = librarySortSettings,
+                    onSort = { showSortDialog = true }
                 )
                 if (showFilters) {
                     FoldersFilterRow(
@@ -343,6 +348,14 @@ fun HomeScreen(
                     onDismiss = { libraryDialogSongId = null }
                 )
             }
+        }
+
+        if (showSortDialog) {
+            LibrarySortDialog(
+                settings = librarySortSettings,
+                onSelect = viewModel::setLibrarySort,
+                onDismiss = { showSortDialog = false }
+            )
         }
     }
 
@@ -635,7 +648,9 @@ private fun SearchField(
 private fun LibrarySummary(
     songCount: Int,
     filtersVisible: Boolean,
-    onToggleFilters: () -> Unit
+    onToggleFilters: () -> Unit,
+    sortSettings: LibrarySortSettings,
+    onSort: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -650,6 +665,8 @@ private fun LibrarySummary(
             color = MaterialTheme.colorScheme.onSurface
         )
         Spacer(modifier = Modifier.weight(1f))
+        LibrarySortButton(settings = sortSettings, onClick = onSort)
+        Spacer(modifier = Modifier.width(4.dp))
         IconButton(onClick = onToggleFilters, modifier = Modifier.size(32.dp)) {
             JexSymbolIcon(
                 symbol = JexSymbol.Filter,

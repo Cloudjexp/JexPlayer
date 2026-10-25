@@ -18,6 +18,7 @@ import androidx.media3.session.SessionToken
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
 import com.cloudjex.jexplayer.data.local.AppearancePreferenceStore
 import com.cloudjex.jexplayer.data.local.CustomLibrariesStore
+import com.cloudjex.jexplayer.data.local.LibrarySortPreferenceStore
 import com.cloudjex.jexplayer.data.local.LibraryCache
 import com.cloudjex.jexplayer.data.local.LastSongStore
 import com.cloudjex.jexplayer.data.local.ScreenPreferenceStore
@@ -30,6 +31,10 @@ import com.cloudjex.jexplayer.data.model.CustomLibrary
 import com.cloudjex.jexplayer.data.model.CustomLibraryEditResult
 import com.cloudjex.jexplayer.data.model.CustomLibraryNameError
 import com.cloudjex.jexplayer.data.model.CustomLibraryRules
+import com.cloudjex.jexplayer.data.model.LibrarySortDirection
+import com.cloudjex.jexplayer.data.model.LibrarySortField
+import com.cloudjex.jexplayer.data.model.LibrarySortSettings
+import com.cloudjex.jexplayer.data.model.LibrarySongSorter
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.data.model.toSong
@@ -82,6 +87,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val albumArtStore = AlbumArtStore.from(appContext)
     private val scanner = SafMusicScanner(appContext, albumArtStore)
     private val libraryCache = LibraryCache.from(appContext)
+    private val librarySortPreferences = LibrarySortPreferenceStore.from(appContext)
     private val screenPreferences = ScreenPreferenceStore.from(appContext)
     private val appearancePreferences =
         AppearancePreferenceStore.from(appContext)
@@ -109,6 +115,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var cachedEntries: List<CachedSong> = emptyList()
     private var cacheLoaded = false
     private var libraryScanCompleted = false
+    private var canonicalSongs: List<Song> = emptyList()
 
     private val playerListener = object : Player.Listener {
 
@@ -153,6 +160,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingAction: ((MediaController) -> Unit)? = null
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs.asStateFlow()
+
+    private val _librarySortSettings = MutableStateFlow(LibrarySortSettings())
+    val librarySortSettings: StateFlow<LibrarySortSettings> =
+        _librarySortSettings.asStateFlow()
 
     private val _currentSongId = MutableStateFlow(restoredLastSong?.song?.id)
     val currentSongId: StateFlow<String?> = _currentSongId.asStateFlow()
@@ -282,6 +293,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 restorePlaybackIfNeeded(connected)
             }
+        }
+
+        viewModelScope.launch {
+            _librarySortSettings.value = librarySortPreferences.settings.first()
+            publishSortedLibrary()
         }
 
         reloadLibrary()
@@ -558,7 +574,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 cacheLoaded = true
             }
 
-            _songs.value = visibleCache(folders).map { it.toSong() }
+            setCanonicalSongs(visibleCache(folders).map { it.toSong() })
 
             updateLibrary(folders)
         }
@@ -566,6 +582,24 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshLibrary() {
         reloadLibrary()
+    }
+
+    fun setLibrarySort(field: LibrarySortField, direction: LibrarySortDirection) {
+        val settings = LibrarySortSettings(field, direction)
+        if (_librarySortSettings.value == settings) return
+
+        _librarySortSettings.value = settings
+        publishSortedLibrary()
+        viewModelScope.launch { librarySortPreferences.save(settings) }
+    }
+
+    private fun publishSortedLibrary() {
+        _songs.value = LibrarySongSorter.sort(canonicalSongs, _librarySortSettings.value)
+    }
+
+    private fun setCanonicalSongs(songs: List<Song>) {
+        canonicalSongs = songs
+        publishSortedLibrary()
     }
 
     /**
@@ -794,7 +828,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         libraryScanCompleted = false
 
         if (folders.isEmpty()) {
-            _songs.value = emptyList()
+            setCanonicalSongs(emptyList())
             syncActiveQueue()
             libraryScanCompleted = true
             _isScanning.value = false
@@ -822,14 +856,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }.distinctBy { it.id }
 
-        _songs.value = merged.map { it.toSong() }
+        setCanonicalSongs(merged.map { it.toSong() })
         syncActiveQueue()
         libraryScanCompleted = true
         _isScanning.value = false
 
         val restoredId = _currentSongId.value
         if (restoredId != null) {
-            val resolved = _songs.value.find { it.id == restoredId }
+            val resolved = canonicalSongs.find { it.id == restoredId }
             if (resolved != null) {
                 _restoredSong.value = resolved
                 cargarAudioTags(resolved)
@@ -1056,7 +1090,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         return PlaybackQueue.songsFor(
             context = playbackContext,
-            library = _songs.value,
+            library = canonicalSongs,
             favoriteIds = _favoriteIds.value,
             customLibrarySongIds = customLibrarySongIds
         )

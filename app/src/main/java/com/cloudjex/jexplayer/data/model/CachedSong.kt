@@ -12,7 +12,11 @@ data class CachedSong(
     val albumArtUri: String?,
     val size: Long?,
     val lastModified: Long?,
-    val albumArtScanned: Boolean? = null
+    val albumArtScanned: Boolean? = null,
+    val albumArtist: String = "",
+    val genre: String = "",
+    val year: Int? = null,
+    val metadataScanned: Boolean? = null
 )
 
 fun CachedSong.toSong(): Song = Song(
@@ -22,5 +26,8 @@ fun CachedSong.toSong(): Song = Song(
     album = album,
     duration = duration,
     uri = Uri.parse(uri),
-    albumArtUri = albumArtUri?.let(Uri::parse)
+    albumArtUri = albumArtUri?.let(Uri::parse),
+    albumArtist = albumArtist,
+    genre = genre,
+    year = year
 )
