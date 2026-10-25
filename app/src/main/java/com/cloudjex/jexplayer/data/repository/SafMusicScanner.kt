@@ -3,6 +3,7 @@ package com.cloudjex.jexplayer.data.repository
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.provider.DocumentsContract
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
 import com.cloudjex.jexplayer.data.model.CachedSong
@@ -109,6 +110,7 @@ class SafMusicScanner(
         val cachedSong = cached[songId]
 
         if (cachedSong != null &&
+            cachedSong.metadataScanned == true &&
             ScanReusePolicy.canReuseSong(cachedSong, size, lastModified) {
                 // Solo se consulta el disco si la entrada declara una portada.
                 albumArtStore.exists(songId, size, lastModified)
@@ -140,9 +142,13 @@ class SafMusicScanner(
         var title = displayName.substringBeforeLast('.')
         var artist = UNKNOWN
         var album = UNKNOWN
+        var albumArtist = ""
+        var genre = ""
+        var year: Int? = null
         var duration = 0L
         var albumArtUri: String? = null
         var albumArtScanned = false
+        var metadataScanned = false
 
         val retriever = MediaMetadataRetriever()
         try {
@@ -157,10 +163,22 @@ class SafMusicScanner(
             retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
                 ?.takeIf { it.isNotBlank() }
                 ?.let { album = it }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { albumArtist = it }
+            }
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { genre = it }
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)
+                ?.toIntOrNull()
+                ?.let { year = it }
             retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                 ?.toLongOrNull()
                 ?.let { duration = it }
 
+            metadataScanned = true
             albumArtScanned = true
             albumArtUri = resolveAlbumArt(songId, size, lastModified, retriever)
         } catch (_: Exception) {
@@ -175,12 +193,16 @@ class SafMusicScanner(
             title = title.ifBlank { displayName },
             artist = artist,
             album = album,
+            albumArtist = albumArtist,
+            genre = genre,
+            year = year,
             duration = duration,
             uri = songId,
             albumArtUri = albumArtUri,
             size = size,
             lastModified = lastModified,
-            albumArtScanned = albumArtScanned
+            albumArtScanned = albumArtScanned,
+            metadataScanned = metadataScanned
         )
     }
 

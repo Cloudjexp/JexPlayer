@@ -52,6 +52,20 @@ class LibraryCacheTest {
     }
 
     @Test
+    fun codecRoundTripPreservesSortableMetadata() {
+        val original = listOf(
+            song("content://a/1").copy(
+                albumArtist = "Artista del álbum",
+                genre = "Rock",
+                year = 1984,
+                metadataScanned = true
+            )
+        )
+
+        assertEquals(original, codec.decode(codec.encode(original)))
+    }
+
+    @Test
     fun decodeTreatsOldEntriesWithoutScanFieldAsUnchecked() {
         // JSON tal y como lo escribían las versiones anteriores (sin albumArtScanned).
         val legacy = """
@@ -69,6 +83,10 @@ class LibraryCacheTest {
 
         assertEquals(listOf(null, null), decoded.map { it.albumArtScanned })
         assertEquals("file:///art/2.img", decoded[1].albumArtUri)
+        assertEquals(listOf("", ""), decoded.map { it.albumArtist })
+        assertEquals(listOf("", ""), decoded.map { it.genre })
+        assertEquals(listOf(null, null), decoded.map { it.year })
+        assertEquals(listOf(null, null), decoded.map { it.metadataScanned })
     }
 
     @Test

@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +30,9 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -62,6 +64,7 @@ import coil3.request.ImageRequest
 import androidx.compose.ui.platform.LocalDensity
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
+import com.cloudjex.jexplayer.data.model.LibrarySortSettings
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import com.cloudjex.jexplayer.viewmodel.PlaybackContext
@@ -90,6 +93,10 @@ fun HomeScreen(
     val folderMessage by viewModel.folderMessage.collectAsState()
     val currentSongId by viewModel.currentSongId.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
+    val customLibraries by viewModel.customLibraries.collectAsState()
+    val customLibrariesReady by viewModel.customLibrariesReady.collectAsState()
+    val libraryMessage by viewModel.libraryMessage.collectAsState()
+    val librarySortSettings by viewModel.librarySortSettings.collectAsState()
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var isSearchVisible by rememberSaveable { mutableStateOf(false) }
@@ -97,9 +104,40 @@ fun HomeScreen(
     var showFavoritesPlaylist by rememberSaveable {
         mutableStateOf(false)
     }
+    var selectedLibraryId by rememberSaveable { mutableStateOf<String?>(null) }
+    var libraryDialogSongId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedFolderUri by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedTab by rememberSaveable {
         mutableStateOf(0)
+    }
+    var showSortDialog by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(customLibraries, customLibrariesReady, selectedLibraryId) {
+        if (customLibrariesReady &&
+            selectedLibraryId != null &&
+            customLibraries.none { it.id == selectedLibraryId }
+        ) {
+            selectedLibraryId = null
+        }
+    }
+
+    LaunchedEffect(songs, libraryDialogSongId) {
+        if (libraryDialogSongId != null &&
+            songs.none { it.id == libraryDialogSongId }
+        ) {
+            libraryDialogSongId = null
+        }
+    }
+
+    BackHandler(
+        enabled = (selectedLibraryId != null || showFavoritesPlaylist) &&
+            libraryDialogSongId == null
+    ) {
+        if (selectedLibraryId != null) {
+            selectedLibraryId = null
+        } else {
+            showFavoritesPlaylist = false
+        }
     }
 
     val filteredSongs = remember(songs, searchQuery, selectedFolderUri) {
@@ -156,7 +194,9 @@ fun HomeScreen(
                     filtersVisible = showFilters,
                     onToggleFilters = {
                         showFilters = !showFilters
-                    }
+                    },
+                    sortSettings = librarySortSettings,
+                    onSort = { showSortDialog = true }
                 )
                 if (showFilters) {
                     FoldersFilterRow(
@@ -203,7 +243,10 @@ fun HomeScreen(
                             viewModel = viewModel,
                             listState = listState,
                             pendingFollowId = pendingFollowId,
-                            onPendingFollowHandled = onPendingFollowHandled
+                            onPendingFollowHandled = onPendingFollowHandled,
+                            onAddToLibrary = { song ->
+                                libraryDialogSongId = song.id
+                            }
                         )
                     }
                 }
@@ -211,93 +254,57 @@ fun HomeScreen(
 
             // PESTAÑA 1: LISTAS
             1 -> {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                ) {
-                    if (!showFavoritesPlaylist) {
-                        Text(
-                            text = "Tus listas",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+                val selectedLibrary = selectedLibraryId?.let { id ->
+                    customLibraries.firstOrNull { it.id == id }
+                }
 
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showFavoritesPlaylist = true
-                                },
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainer
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(20.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                JexSymbolIcon(
-                                    symbol = JexSymbol.Favorite,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(32.dp)
-                                )
-
-                                Spacer(modifier = Modifier.width(16.dp))
-
-                                Column {
-                                    Text(
-                                        text = "Favoritos",
-                                        style = MaterialTheme.typography.titleLarge
-                                    )
-
-                                    Text(
-                                        text = "${favoriteSongs.size} canciones",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                when {
+                    selectedLibrary != null -> {
+                        CustomLibraryDetail(
+                            modifier = Modifier.weight(1f),
+                            viewModel = viewModel,
+                            library = selectedLibrary,
+                            songs = songs,
+                            favoriteIds = favoriteIds,
+                            currentSongId = currentSongId,
+                            onBack = { selectedLibraryId = null },
+                            onAddToLibrary = { song ->
+                                libraryDialogSongId = song.id
                             }
-                        }
-                    } else {
-                        Text(
-                            text = "← Favoritos",
-                            style = MaterialTheme.typography.headlineSmall,
-                            modifier = Modifier
-                                .clickable {
-                                    showFavoritesPlaylist = false
-                                }
-                                .padding(bottom = 16.dp)
                         )
+                    }
 
-                        if (favoriteSongs.isEmpty()) {
-                            Text(
-                                text = "Todavía no tienes canciones favoritas.",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        } else {
-                            LazyColumn {
-                                items(
-                                    favoriteSongs,
-                                    key = { it.id }
-                                ) { song ->
-                                    SongItem(
-                                        song = song,
-                                        isCurrent = song.id == currentSongId,
-                                        isFavorite = true,
-                                        onClick = {
-                                            viewModel.playSong(song, PlaybackContext.Favorites)
-                                        },
-                                        onFavoriteClick = {
-                                            viewModel.toggleFavorite(song.id)
-                                        }
-                                    )
-                                }
+                    showFavoritesPlaylist -> {
+                        FavoritesPlaylist(
+                            modifier = Modifier.weight(1f),
+                            viewModel = viewModel,
+                            favoriteSongs = favoriteSongs,
+                            currentSongId = currentSongId,
+                            onBack = { showFavoritesPlaylist = false },
+                            onAddToLibrary = { song ->
+                                libraryDialogSongId = song.id
                             }
-                        }
+                        )
+                    }
+
+                    else -> {
+                        CustomLibrariesOverview(
+                            modifier = Modifier.weight(1f),
+                            viewModel = viewModel,
+                            songs = songs,
+                            favoriteCount = favoriteSongs.size,
+                            customLibraries = customLibraries,
+                            customLibrariesReady = customLibrariesReady,
+                            libraryMessage = libraryMessage,
+                            onOpenFavorites = {
+                                selectedLibraryId = null
+                                showFavoritesPlaylist = true
+                            },
+                            onOpenLibrary = { libraryId ->
+                                showFavoritesPlaylist = false
+                                selectedLibraryId = libraryId
+                            }
+                        )
                     }
                 }
             }
@@ -327,8 +334,84 @@ fun HomeScreen(
                 selectedTab = it
             }
         )
+
+        libraryDialogSongId?.let { songId ->
+            songs.firstOrNull { it.id == songId }?.let { song ->
+                AddToLibraryDialog(
+                    viewModel = viewModel,
+                    song = song,
+                    libraries = customLibraries,
+                    librariesReady = customLibrariesReady,
+                    onToggle = { libraryId ->
+                        viewModel.toggleSongInCustomLibrary(libraryId, song.id)
+                    },
+                    onDismiss = { libraryDialogSongId = null }
+                )
+            }
+        }
+
+        if (showSortDialog) {
+            LibrarySortDialog(
+                settings = librarySortSettings,
+                onSelect = viewModel::setLibrarySort,
+                onDismiss = { showSortDialog = false }
+            )
+        }
     }
 
+}
+
+@Composable
+private fun FavoritesPlaylist(
+    modifier: Modifier = Modifier,
+    viewModel: MusicViewModel,
+    favoriteSongs: List<Song>,
+    currentSongId: String?,
+    onBack: () -> Unit,
+    onAddToLibrary: (Song) -> Unit
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "← Favoritos",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier
+                .clickable(onClick = onBack)
+                .padding(bottom = 16.dp)
+        )
+
+        if (favoriteSongs.isEmpty()) {
+            Text(
+                text = "Todavía no tienes canciones favoritas.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        } else {
+            LazyColumn {
+                items(
+                    favoriteSongs,
+                    key = { it.id }
+                ) { song ->
+                    SongItem(
+                        song = song,
+                        isCurrent = song.id == currentSongId,
+                        isFavorite = true,
+                        onClick = {
+                            viewModel.playSong(song, PlaybackContext.Favorites)
+                        },
+                        onFavoriteClick = {
+                            viewModel.toggleFavorite(song.id)
+                        },
+                        onAddToLibraryClick = {
+                            onAddToLibrary(song)
+                        }
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -338,7 +421,8 @@ private fun LibrarySongList(
     viewModel: MusicViewModel,
     listState: LazyListState,
     pendingFollowId: String?,
-    onPendingFollowHandled: (String) -> Unit
+    onPendingFollowHandled: (String) -> Unit,
+    onAddToLibrary: (Song) -> Unit
 ) {
     val currentSongId by viewModel.currentSongId.collectAsState()
     var observedSongId by remember { mutableStateOf(currentSongId) }
@@ -390,7 +474,8 @@ private fun LibrarySongList(
                 isCurrent = song.id == currentSongId,
                 isFavorite = song.id in favoriteIds,
                 onClick = { viewModel.playSong(song, PlaybackContext.Library) },
-                onFavoriteClick = { viewModel.toggleFavorite(song.id) }
+                onFavoriteClick = { viewModel.toggleFavorite(song.id) },
+                onAddToLibraryClick = { onAddToLibrary(song) }
             )
         }
     }
@@ -563,7 +648,9 @@ private fun SearchField(
 private fun LibrarySummary(
     songCount: Int,
     filtersVisible: Boolean,
-    onToggleFilters: () -> Unit
+    onToggleFilters: () -> Unit,
+    sortSettings: LibrarySortSettings,
+    onSort: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -578,6 +665,8 @@ private fun LibrarySummary(
             color = MaterialTheme.colorScheme.onSurface
         )
         Spacer(modifier = Modifier.weight(1f))
+        LibrarySortButton(settings = sortSettings, onClick = onSort)
+        Spacer(modifier = Modifier.width(4.dp))
         IconButton(onClick = onToggleFilters, modifier = Modifier.size(32.dp)) {
             JexSymbolIcon(
                 symbol = JexSymbol.Filter,
@@ -701,14 +790,16 @@ private fun SongArtwork(
 }
 
 @Composable
-private fun SongItem(
+internal fun SongItem(
     song: Song,
     isCurrent: Boolean,
     isFavorite: Boolean,
     onClick: () -> Unit,
-    onFavoriteClick: () -> Unit
+    onFavoriteClick: () -> Unit,
+    onAddToLibraryClick: () -> Unit,
+    onRemoveFromLibraryClick: (() -> Unit)? = null
 ) {
-    val durationText = remember(song.duration) { formatDuration(song.duration) }
+    var listActionsExpanded by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier
@@ -759,11 +850,11 @@ private fun SongItem(
                 }
             }
 
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
             Column(
                 horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
                     text = formatDuration(song.duration),
@@ -771,25 +862,89 @@ private fun SongItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                IconButton(
-                    onClick = onFavoriteClick,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    JexSymbolIcon(
-                        symbol = JexSymbol.Favorite,
-                        contentDescription = if (isFavorite) {
-                            "Quitar de favoritos"
-                        } else {
-                            "Agregar a favoritos"
-                        },
-                        tint = if (isFavorite) {
-                            androidx.compose.ui.graphics.Color(0xFFE57373)
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        modifier = Modifier.size(22.dp)
-                    )
-            }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box {
+                        IconButton(
+                            onClick = {
+                                if (onRemoveFromLibraryClick == null) {
+                                    onAddToLibraryClick()
+                                } else {
+                                    listActionsExpanded = true
+                                }
+                            },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            JexSymbolIcon(
+                                symbol = JexSymbol.QueueMusic,
+                                contentDescription = if (onRemoveFromLibraryClick == null) {
+                                    "Añadir a lista"
+                                } else {
+                                    "Acciones de lista"
+                                },
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+
+                        if (onRemoveFromLibraryClick != null) {
+                            DropdownMenu(
+                                expanded = listActionsExpanded,
+                                onDismissRequest = { listActionsExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Añadir a lista") },
+                                    leadingIcon = {
+                                        JexSymbolIcon(
+                                            symbol = JexSymbol.QueueMusic,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    },
+                                    onClick = {
+                                        listActionsExpanded = false
+                                        onAddToLibraryClick()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Quitar de esta lista") },
+                                    leadingIcon = {
+                                        JexSymbolIcon(
+                                            symbol = JexSymbol.Close,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    },
+                                    onClick = {
+                                        listActionsExpanded = false
+                                        onRemoveFromLibraryClick()
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    IconButton(
+                        onClick = onFavoriteClick,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        JexSymbolIcon(
+                            symbol = JexSymbol.Favorite,
+                            contentDescription = if (isFavorite) {
+                                "Quitar de favoritos"
+                            } else {
+                                "Agregar a favoritos"
+                            },
+                            tint = if (isFavorite) {
+                                androidx.compose.ui.graphics.Color(0xFFE57373)
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
             }
         }
     }
