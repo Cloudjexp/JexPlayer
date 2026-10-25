@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
+import android.os.Bundle
 import android.provider.DocumentsContract
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -16,6 +17,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
 import com.cloudjex.jexplayer.data.local.AppearancePreferenceStore
+import com.cloudjex.jexplayer.data.local.CustomLibrariesStore
 import com.cloudjex.jexplayer.data.local.LibraryCache
 import com.cloudjex.jexplayer.data.local.LastSongStore
 import com.cloudjex.jexplayer.data.local.ScreenPreferenceStore
@@ -24,6 +26,10 @@ import com.cloudjex.jexplayer.data.model.AudioTechnicalInfo
 import com.cloudjex.jexplayer.data.model.SongAudioTechnicalInfo
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
 import com.cloudjex.jexplayer.data.model.CachedSong
+import com.cloudjex.jexplayer.data.model.CustomLibrary
+import com.cloudjex.jexplayer.data.model.CustomLibraryEditResult
+import com.cloudjex.jexplayer.data.model.CustomLibraryNameError
+import com.cloudjex.jexplayer.data.model.CustomLibraryRules
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.data.model.toSong
@@ -40,8 +46,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import com.cloudjex.jexplayer.data.local.FavoritesStore
 import com.cloudjex.jexplayer.data.update.CheckResult
@@ -83,6 +92,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private val favoritesStore = FavoritesStore.from(appContext)
+    private val customLibrariesStore = CustomLibrariesStore.from(appContext)
+    private val customLibrariesSaveMutex = Mutex()
     private val lastSongStore = LastSongStore(appContext)
     private val restoredLastSong = lastSongStore.load()
     private var scanJob: Job? = null
@@ -97,6 +108,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private var cachedEntries: List<CachedSong> = emptyList()
     private var cacheLoaded = false
+    private var libraryScanCompleted = false
 
     private val playerListener = object : Player.Listener {
 
@@ -175,6 +187,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val favoriteIds: StateFlow<Set<String>> =
         _favoriteIds.asStateFlow()
 
+    private val _customLibraries =
+        MutableStateFlow<List<CustomLibrary>>(emptyList())
+    val customLibraries: StateFlow<List<CustomLibrary>> =
+        _customLibraries.asStateFlow()
+
+    private val _customLibrariesReady = MutableStateFlow(false)
+    val customLibrariesReady: StateFlow<Boolean> =
+        _customLibrariesReady.asStateFlow()
+
+    private val _libraryMessage = MutableStateFlow<String?>(null)
+    val libraryMessage: StateFlow<String?> =
+        _libraryMessage.asStateFlow()
+
     private val _revokedFolderUris = MutableStateFlow<Set<String>>(emptySet())
     val revokedFolderUris: StateFlow<Set<String>> = _revokedFolderUris.asStateFlow()
 
@@ -239,6 +264,26 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
 
         startProgressTracking()
+
+        viewModelScope.launch {
+            val loaded = customLibrariesStore.load()
+            _customLibraries.value = loaded.libraries
+            _customLibrariesReady.value = true
+            if (loaded.corrupted) {
+                _libraryMessage.value =
+                    "No se pudieron leer las listas guardadas. Se conservó una copia."
+            }
+
+            controller?.let { connected ->
+                val previousContext = playbackContext
+                inferPlaybackContext(connected)
+                if (playbackContext != previousContext && libraryScanCompleted) {
+                    syncActiveQueue()
+                }
+                restorePlaybackIfNeeded(connected)
+            }
+        }
+
         reloadLibrary()
         restoredLastSong?.song?.let(::cargarAudioTags)
 
@@ -362,17 +407,44 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Si el servicio quedó vivo al cerrar la Activity, su cola es la fuente de
-     * verdad. Esto permite volver a conectar controles externos sin reemplazar
-     * una cola de Favoritos por la biblioteca.
+     * verdad. El contexto viaja en los metadatos de cada [MediaItem]; si una
+     * sesión antigua no los tiene, se conserva la inferencia por favoritos.
      */
     private fun inferPlaybackContext(controller: MediaController) {
         if (controller.mediaItemCount == 0) return
+
+        val taggedItem = controller.currentMediaItem ?: controller.getMediaItemAt(0)
+        val extras = taggedItem.mediaMetadata.extras
+        val taggedContext = PlaybackContext.fromMetadata(
+            type = extras?.getString(PlaybackContext.METADATA_CONTEXT_TYPE),
+            libraryId = extras?.getString(PlaybackContext.METADATA_LIBRARY_ID)
+        )
+
+        playbackContext = when {
+            taggedContext is PlaybackContext.Custom &&
+                _customLibrariesReady.value &&
+                _customLibraries.value.none { it.id == taggedContext.libraryId } ->
+                PlaybackContext.Library
+
+            taggedContext != null -> taggedContext
+
+            else -> inferLegacyContext(controller)
+        }
+    }
+
+    private fun inferLegacyContext(controller: MediaController): PlaybackContext {
         val ids = (0 until controller.mediaItemCount).map {
             controller.getMediaItemAt(it).mediaId
         }
         val favoriteIds = _favoriteIds.value
-        if (ids.all { it in favoriteIds } && ids.size <= favoriteIds.size) {
-            playbackContext = PlaybackContext.Favorites
+
+        return if (ids.isNotEmpty() &&
+            ids.all { it in favoriteIds } &&
+            ids.size <= favoriteIds.size
+        ) {
+            PlaybackContext.Favorites
+        } else {
+            PlaybackContext.Library
         }
     }
 
@@ -387,7 +459,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val targetIndex = findMediaIdIndex(songs.map { it.id }, saved.song.id)
         if (targetIndex == -1) return
 
-        val queueIsValid = controllerHasQueue(controller, songs)
+        val queueIsValid = controllerHasQueue(controller, songs, playbackContext)
         val queueIndex = if (queueIsValid) {
             findMediaIdIndex(
                 (0 until controller.mediaItemCount).map { controller.getMediaItemAt(it).mediaId },
@@ -401,7 +473,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             controller.seekTo(queueIndex, saved.position)
             controller.prepare()
         } else {
-            controller.setMediaItems(songs.map { it.toMediaItem() }, targetIndex, saved.position)
+            controller.setMediaItems(
+                songs.map { it.toMediaItem(playbackContext) },
+                targetIndex,
+                saved.position
+            )
             controller.shuffleModeEnabled = _isShuffleEnabled.value
             controller.prepare()
         }
@@ -511,10 +587,194 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { appearancePreferences.saveTheme(theme) }
     }
 
+    /**
+     * Validación síncrona para los diálogos de crear y renombrar. Devuelve
+     * `null` si el nombre es válido o si las listas aún se están cargando.
+     */
+    fun customLibraryNameError(
+        rawName: String,
+        excludingId: String? = null
+    ): CustomLibraryNameError? =
+        if (_customLibrariesReady.value) {
+            CustomLibraryRules.nameError(_customLibraries.value, rawName, excludingId)
+        } else {
+            null
+        }
+
+    fun createCustomLibrary(rawName: String): Boolean {
+        if (!beginCustomLibraryEdit()) return false
+
+        return applyCustomLibraryEdit(
+            result = CustomLibraryRules.create(
+                libraries = _customLibraries.value,
+                id = UUID.randomUUID().toString(),
+                rawName = rawName
+            ),
+            successMessage = "Lista creada: ${CustomLibraryRules.normalizeName(rawName)}"
+        )
+    }
+
+    fun renameCustomLibrary(libraryId: String, rawName: String): Boolean {
+        if (!beginCustomLibraryEdit()) return false
+
+        return applyCustomLibraryEdit(
+            result = CustomLibraryRules.rename(
+                libraries = _customLibraries.value,
+                libraryId = libraryId,
+                rawName = rawName
+            ),
+            successMessage = "Lista renombrada."
+        )
+    }
+
+    fun deleteCustomLibrary(libraryId: String): Boolean {
+        if (!beginCustomLibraryEdit()) return false
+
+        val wasActive = isCustomLibraryActive(libraryId)
+        val previousLibraries = _customLibraries.value
+        val accepted = applyCustomLibraryEdit(
+            result = CustomLibraryRules.delete(
+                libraries = _customLibraries.value,
+                libraryId = libraryId
+            ),
+            successMessage = "Lista eliminada."
+        )
+
+        if (accepted &&
+            _customLibraries.value != previousLibraries &&
+            wasActive
+        ) {
+            playbackContext = PlaybackContext.Library
+            syncActiveQueue()
+        }
+
+        return accepted
+    }
+
+    fun addSongToCustomLibrary(libraryId: String, songId: String): Boolean =
+        applySongMembershipEdit(
+            libraryId = libraryId,
+            result = CustomLibraryRules.addSong(
+                libraries = _customLibraries.value,
+                libraryId = libraryId,
+                songId = songId
+            )
+        )
+
+    fun removeSongFromCustomLibrary(libraryId: String, songId: String): Boolean =
+        applySongMembershipEdit(
+            libraryId = libraryId,
+            result = CustomLibraryRules.removeSong(
+                libraries = _customLibraries.value,
+                libraryId = libraryId,
+                songId = songId
+            )
+        )
+
+    fun toggleSongInCustomLibrary(libraryId: String, songId: String): Boolean =
+        applySongMembershipEdit(
+            libraryId = libraryId,
+            result = CustomLibraryRules.toggleSong(
+                libraries = _customLibraries.value,
+                libraryId = libraryId,
+                songId = songId
+            )
+        )
+
+    fun clearLibraryMessage() {
+        _libraryMessage.value = null
+    }
+
+    private fun beginCustomLibraryEdit(): Boolean {
+        if (!_customLibrariesReady.value) {
+            _libraryMessage.value = "Cargando listas…"
+            return false
+        }
+
+        _libraryMessage.value = null
+        return true
+    }
+
+    private fun applySongMembershipEdit(
+        libraryId: String,
+        result: CustomLibraryEditResult
+    ): Boolean {
+        if (!beginCustomLibraryEdit()) return false
+
+        val previousLibraries = _customLibraries.value
+        val accepted = applyCustomLibraryEdit(result)
+
+        if (accepted &&
+            _customLibraries.value != previousLibraries &&
+            isCustomLibraryActive(libraryId)
+        ) {
+            syncActiveQueue()
+        }
+
+        return accepted
+    }
+
+    private fun isCustomLibraryActive(libraryId: String): Boolean =
+        (playbackContext as? PlaybackContext.Custom)?.libraryId == libraryId
+
+    private fun applyCustomLibraryEdit(
+        result: CustomLibraryEditResult,
+        successMessage: String? = null
+    ): Boolean = when (result) {
+        is CustomLibraryEditResult.Updated -> {
+            if (_customLibraries.value != result.libraries) {
+                _customLibraries.value = result.libraries
+                if (successMessage != null) {
+                    _libraryMessage.value = successMessage
+                }
+                persistCustomLibraries()
+            }
+            true
+        }
+
+        is CustomLibraryEditResult.InvalidName -> {
+            _libraryMessage.value = customLibraryNameMessage(result.error)
+            false
+        }
+
+        CustomLibraryEditResult.NotFound -> {
+            _libraryMessage.value = "No se encontró la lista."
+            false
+        }
+    }
+
+    private fun customLibraryNameMessage(error: CustomLibraryNameError): String =
+        when (error) {
+            CustomLibraryNameError.Blank -> "El nombre no puede estar vacío."
+            CustomLibraryNameError.TooLong ->
+                "El nombre no puede superar los 80 caracteres."
+            CustomLibraryNameError.Reserved -> "«Favoritos» es una lista reservada."
+            CustomLibraryNameError.Duplicate ->
+                "Ya existe una lista con ese nombre."
+        }
+
+    private fun persistCustomLibraries() {
+        viewModelScope.launch {
+            customLibrariesSaveMutex.withLock {
+                val snapshot = _customLibraries.value
+                if (customLibrariesStore.save(snapshot)) {
+                    if (_libraryMessage.value == CUSTOM_LIBRARIES_SAVE_FAILED) {
+                        _libraryMessage.value = null
+                    }
+                } else {
+                    _libraryMessage.value = CUSTOM_LIBRARIES_SAVE_FAILED
+                }
+            }
+        }
+    }
+
     private suspend fun updateLibrary(folders: List<Uri>) {
+        libraryScanCompleted = false
+
         if (folders.isEmpty()) {
             _songs.value = emptyList()
             syncActiveQueue()
+            libraryScanCompleted = true
             _isScanning.value = false
             if (cacheLoaded && cachedEntries.isNotEmpty()) {
                 cachedEntries = emptyList()
@@ -542,6 +802,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         _songs.value = merged.map { it.toSong() }
         syncActiveQueue()
+        libraryScanCompleted = true
         _isScanning.value = false
 
         val restoredId = _currentSongId.value
@@ -721,6 +982,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playSong(song: Song, context: PlaybackContext?) {
         if (context != null) playbackContext = context
+        if (playbackContext is PlaybackContext.Custom && !_customLibrariesReady.value) {
+            return
+        }
+
+        val queueContext = playbackContext
         val queueSongs = activeQueueSongs()
         if (song !in queueSongs) return
 
@@ -737,11 +1003,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val startIndex = songs.indexOfFirst { it.id == song.id }
 
             if (startIndex >= 0) {
-                if (controllerHasQueue(controller, songs)) {
+                if (controllerHasQueue(controller, songs, queueContext)) {
                     controller.seekTo(startIndex, 0L)
                 } else {
                     controller.setMediaItems(
-                        songs.map { item -> item.toMediaItem() },
+                        songs.map { item -> item.toMediaItem(queueContext) },
                         startIndex,
                         0L
                     )
@@ -749,7 +1015,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     controller.prepare()
                 }
             } else {
-                controller.setMediaItem(song.toMediaItem())
+                controller.setMediaItem(song.toMediaItem(queueContext))
                 controller.shuffleModeEnabled = _isShuffleEnabled.value
                 controller.prepare()
             }
@@ -758,21 +1024,51 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun activeQueueSongs(): List<Song> = PlaybackQueue.songsFor(
-        playbackContext,
-        _songs.value,
-        _favoriteIds.value
-    )
+    private fun activeQueueSongs(): List<Song> {
+        val customLibrarySongIds =
+            (playbackContext as? PlaybackContext.Custom)?.let { context ->
+                _customLibraries.value
+                    .firstOrNull { it.id == context.libraryId }
+                    ?.songIds
+            }.orEmpty()
+
+        return PlaybackQueue.songsFor(
+            context = playbackContext,
+            library = _songs.value,
+            favoriteIds = _favoriteIds.value,
+            customLibrarySongIds = customLibrarySongIds
+        )
+    }
 
     /** Actualiza Media3 solo cuando la lista contextual cambió. */
     private fun syncActiveQueue() {
         runOnController { controller ->
+            if (playbackContext is PlaybackContext.Custom &&
+                !_customLibrariesReady.value
+            ) {
+                return@runOnController
+            }
+
+            // Sin una cola activa la reproducción se construirá en playSong.
+            if (controller.mediaItemCount == 0 && controller.currentMediaItem == null) {
+                return@runOnController
+            }
+
+            val queueContext = playbackContext
             val songs = activeQueueSongs()
-            if (controllerHasQueue(controller, songs)) return@runOnController
+            if (controllerHasQueue(controller, songs, queueContext)) {
+                return@runOnController
+            }
 
             val currentId = controller.currentMediaItem?.mediaId ?: _currentSongId.value
-            val currentIndex = songs.indexOfFirst { it.id == currentId }
-            if (songs.isEmpty() || currentIndex < 0) {
+            val previousIndex = controller.currentMediaItemIndex
+            val targetIndex = PlaybackQueue.resolveIndexAfterChange(
+                ids = songs.map(Song::id),
+                currentId = currentId,
+                previousIndex = previousIndex
+            )
+
+            if (songs.isEmpty() || targetIndex < 0) {
                 controller.clearMediaItems()
                 controller.pause()
                 _currentSongId.value = null
@@ -781,23 +1077,59 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 return@runOnController
             }
 
+            val targetSong = songs[targetIndex]
+            val currentSongKept = targetSong.id == currentId
             val wasPlaying = controller.isPlaying || controller.playWhenReady
-            val position = controller.currentPosition.coerceAtLeast(0L)
-            controller.setMediaItems(songs.map { it.toMediaItem() }, currentIndex, position)
+            val position = if (currentSongKept) {
+                controller.currentPosition.coerceAtLeast(0L)
+            } else {
+                0L
+            }
+
+            controller.setMediaItems(
+                songs.map { it.toMediaItem(queueContext) },
+                targetIndex,
+                position
+            )
             controller.shuffleModeEnabled = _isShuffleEnabled.value
             controller.repeatMode = if (_repeatMode.value == RepeatMode.ONE) {
                 Player.REPEAT_MODE_ONE
             } else Player.REPEAT_MODE_OFF
             controller.prepare()
             controller.playWhenReady = wasPlaying
+
+            if (!currentSongKept) {
+                _currentSongId.value = targetSong.id
+                _restoredSong.value = targetSong
+                _currentPosition.value = 0L
+                _duration.value = targetSong.duration
+                lastSongStore.save(targetSong, 0L)
+                cargarAudioTags(targetSong)
+            }
         }
     }
 
-    private fun controllerHasQueue(controller: MediaController, songs: List<Song>): Boolean {
+    private fun controllerHasQueue(
+        controller: MediaController,
+        songs: List<Song>,
+        context: PlaybackContext
+    ): Boolean {
         if (controller.mediaItemCount != songs.size) return false
 
+        val expectedType = PlaybackContext.metadataType(context)
+        val expectedLibraryId = PlaybackContext.metadataLibraryId(context)
+
         for (index in songs.indices) {
-            if (controller.getMediaItemAt(index).mediaId != songs[index].id) return false
+            val item = controller.getMediaItemAt(index)
+            if (item.mediaId != songs[index].id) return false
+
+            val extras = item.mediaMetadata.extras
+            if (extras?.getString(PlaybackContext.METADATA_CONTEXT_TYPE) != expectedType) {
+                return false
+            }
+            if (extras?.getString(PlaybackContext.METADATA_LIBRARY_ID) != expectedLibraryId) {
+                return false
+            }
         }
 
         return true
@@ -954,12 +1286,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         MediaController.releaseFuture(controllerFuture)
     }
 }
-private fun Song.toMediaItem(): MediaItem {
+
+private const val CUSTOM_LIBRARIES_SAVE_FAILED = "No se pudieron guardar las listas."
+
+private fun Song.toMediaItem(context: PlaybackContext): MediaItem {
     val artwork = albumArtUri
+    val extras = Bundle().apply {
+        putString(
+            PlaybackContext.METADATA_CONTEXT_TYPE,
+            PlaybackContext.metadataType(context)
+        )
+        PlaybackContext.metadataLibraryId(context)?.let { libraryId ->
+            putString(PlaybackContext.METADATA_LIBRARY_ID, libraryId)
+        }
+    }
     val metadata = MediaMetadata.Builder()
         .setTitle(title)
         .setArtist(artist)
         .setAlbumTitle(album)
+        .setExtras(extras)
         .apply { if (artwork != null) setArtworkUri(artwork) }
         .build()
 

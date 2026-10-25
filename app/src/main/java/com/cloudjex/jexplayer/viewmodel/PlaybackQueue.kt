@@ -8,28 +8,86 @@ sealed interface PlaybackContext {
     data object Library : PlaybackContext
     data object Favorites : PlaybackContext
 
-    /** Preparado para listas persistidas: conserva únicamente sus IDs en la biblioteca actual. */
-    data class Custom(val songIds: List<String>) : PlaybackContext
+    /** Biblioteca personalizada identificada por su ID persistido. */
+    data class Custom(val libraryId: String) : PlaybackContext
+
+    companion object {
+        const val METADATA_CONTEXT_TYPE =
+            "com.cloudjex.jexplayer.playback.CONTEXT_TYPE"
+        const val METADATA_LIBRARY_ID =
+            "com.cloudjex.jexplayer.playback.LIBRARY_ID"
+
+        private const val TYPE_LIBRARY = "library"
+        private const val TYPE_FAVORITES = "favorites"
+        private const val TYPE_CUSTOM = "custom"
+
+        fun metadataType(context: PlaybackContext): String = when (context) {
+            PlaybackContext.Library -> TYPE_LIBRARY
+            PlaybackContext.Favorites -> TYPE_FAVORITES
+            is PlaybackContext.Custom -> TYPE_CUSTOM
+        }
+
+        fun metadataLibraryId(context: PlaybackContext): String? =
+            (context as? PlaybackContext.Custom)?.libraryId
+
+        fun fromMetadata(type: String?, libraryId: String?): PlaybackContext? = when (type) {
+            TYPE_LIBRARY -> PlaybackContext.Library
+            TYPE_FAVORITES -> PlaybackContext.Favorites
+            TYPE_CUSTOM -> libraryId
+                ?.takeIf { it.isNotBlank() }
+                ?.let { PlaybackContext.Custom(it) }
+            else -> null
+        }
+    }
 }
 
 internal object PlaybackQueue {
     fun songsFor(
         context: PlaybackContext,
         library: List<Song>,
-        favoriteIds: Set<String>
+        favoriteIds: Set<String>,
+        customLibrarySongIds: List<String>
     ): List<Song> {
         val byId = library.associateBy { it.id }
-        return idsFor(context, library.map(Song::id), favoriteIds).mapNotNull(byId::get)
+        return idsFor(
+            context = context,
+            libraryIds = library.map(Song::id),
+            favoriteIds = favoriteIds,
+            customLibrarySongIds = customLibrarySongIds
+        ).mapNotNull(byId::get)
     }
 
     internal fun idsFor(
         context: PlaybackContext,
         libraryIds: List<String>,
-        favoriteIds: Set<String>
+        favoriteIds: Set<String>,
+        customLibrarySongIds: List<String>
     ): List<String> = when (context) {
         PlaybackContext.Library -> libraryIds
         PlaybackContext.Favorites -> libraryIds.filter { it in favoriteIds }
-        is PlaybackContext.Custom -> context.songIds.filter { it in libraryIds }
+        is PlaybackContext.Custom -> {
+            val available = libraryIds.toSet()
+            customLibrarySongIds.filter { it in available }
+        }
+    }
+
+    /**
+     * Índice que debe quedar seleccionado después de cambiar la cola.
+     *
+     * Si la canción actual sigue presente se conserva. Si desapareció se usa el
+     * índice anterior más cercano. Devuelve -1 solo para una cola vacía.
+     */
+    internal fun resolveIndexAfterChange(
+        ids: List<String>,
+        currentId: String?,
+        previousIndex: Int
+    ): Int {
+        if (ids.isEmpty()) return -1
+
+        val currentIndex = ids.indexOf(currentId)
+        if (currentIndex >= 0) return currentIndex
+
+        return previousIndex.coerceIn(0, ids.lastIndex)
     }
 
     fun navigate(
