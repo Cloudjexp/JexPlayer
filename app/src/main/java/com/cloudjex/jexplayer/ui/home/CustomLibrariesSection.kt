@@ -146,7 +146,8 @@ fun CustomLibrariesOverview(
                             ?.let { song ->
                                 viewModel.playSong(
                                     song,
-                                    PlaybackContext.Custom(library.id)
+                                    PlaybackContext.Custom(library.id),
+                                    library.songIds.mapNotNull(songsById::get)
                                 )
                             }
                     },
@@ -243,7 +244,11 @@ fun CustomLibraryDetail(
             IconButton(
                 onClick = {
                     librarySongs.firstOrNull()?.let { song ->
-                        viewModel.playSong(song, PlaybackContext.Custom(library.id))
+                        viewModel.playSong(
+                            song,
+                            PlaybackContext.Custom(library.id),
+                            librarySongs
+                        )
                     }
                 },
                 enabled = librarySongs.isNotEmpty()
@@ -299,7 +304,8 @@ fun CustomLibraryDetail(
                         onClick = {
                             viewModel.playSong(
                                 song,
-                                PlaybackContext.Custom(library.id)
+                                PlaybackContext.Custom(library.id),
+                                librarySongs
                             )
                         },
                         onFavoriteClick = { viewModel.toggleFavorite(song.id) },
