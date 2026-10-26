@@ -778,7 +778,7 @@ private fun FoldersFilterRow(
 }
 
 @Composable
-private fun SongArtwork(
+internal fun SongArtwork(
     song: Song,
     size: Dp,
     cornerRadius: Dp
@@ -993,7 +993,7 @@ private fun EmptyLibrary(message: String) {
 }
 
 @Composable
-private fun MiniPlayer(
+internal fun MiniPlayer(
     song: Song,
     isPlaying: Boolean,
     isShuffleEnabled: Boolean,
@@ -1003,10 +1003,11 @@ private fun MiniPlayer(
     onNext: () -> Unit,
     onShuffle: () -> Unit,
     onRepeat: () -> Unit,
-    onOpenPlayer: () -> Unit
+    onOpenPlayer: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 2.dp),
         shape = RoundedCornerShape(18.dp),
@@ -1092,7 +1093,7 @@ private fun MiniPlayer(
 }
 
 @Composable
-private fun PlayPauseButton(
+internal fun PlayPauseButton(
     isPlaying: Boolean,
     onClick: () -> Unit,
     size: Dp = 48.dp

@@ -21,8 +21,16 @@ import com.cloudjex.jexplayer.data.local.CustomLibrariesStore
 import com.cloudjex.jexplayer.data.local.LibrarySortPreferenceStore
 import com.cloudjex.jexplayer.data.local.LibraryCache
 import com.cloudjex.jexplayer.data.local.LastSongStore
+import com.cloudjex.jexplayer.data.local.LyricsSettingsStore
 import com.cloudjex.jexplayer.data.local.ScreenPreferenceStore
+import com.cloudjex.jexplayer.data.lyrics.LyricsDocument
+import com.cloudjex.jexplayer.data.lyrics.LyricsLoadState
+import com.cloudjex.jexplayer.data.lyrics.LyricsMatcher
+import com.cloudjex.jexplayer.data.lyrics.LyricsRepository
+import com.cloudjex.jexplayer.data.lyrics.LyricsSidecar
+import com.cloudjex.jexplayer.data.lyrics.LyricsSource
 import com.cloudjex.jexplayer.data.model.AudioTags
+import com.cloudjex.jexplayer.data.model.LyricsSettings
 import com.cloudjex.jexplayer.data.model.AudioTechnicalInfo
 import com.cloudjex.jexplayer.data.model.SongAudioTechnicalInfo
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
@@ -41,6 +49,7 @@ import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.data.model.toSong
 import com.cloudjex.jexplayer.data.repository.FolderRepository
 import com.cloudjex.jexplayer.data.repository.SafMusicScanner
+import com.cloudjex.jexplayer.data.repository.ScanOutcome
 import com.cloudjex.jexplayer.playback.PlaybackService
 import com.cloudjex.jexplayer.ui.player.FlacInfo
 import kotlinx.coroutines.Dispatchers
@@ -92,6 +101,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val screenPreferences = ScreenPreferenceStore.from(appContext)
     private val appearancePreferences =
         AppearancePreferenceStore.from(appContext)
+    private val lyricsSettingsStore = LyricsSettingsStore.from(appContext)
+    private val lyricsRepository = LyricsRepository(appContext)
     private val updateChecker = UpdateChecker(
         client = GithubReleaseClient(),
         store = updateCheckStore(appContext),
@@ -109,6 +120,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile
     private var audioTagsRequestId = 0L
     private var audioTagsRequestedSongId: String? = null
+    private var lyricsJob: Job? = null
+    private var lyricsRequestId = 0L
+    private var lyricsSongId: String? = null
+    private var lyricsSidecarsByFolder: Map<String, List<LyricsSidecar>> = emptyMap()
+    private var lyricsSidecars: List<LyricsSidecar> = emptyList()
     private val audioTechnicalInfoCache = ConcurrentHashMap<String, AudioTechnicalInfo>()
     private var playbackRestored = false
     private var playbackContext: PlaybackContext = PlaybackContext.Library
@@ -230,6 +246,22 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _audioTagsLoadState = MutableStateFlow(AudioTagsLoadState.IDLE)
     val audioTagsLoadState: StateFlow<AudioTagsLoadState> = _audioTagsLoadState.asStateFlow()
+
+    private val _lyricsDocument = MutableStateFlow<LyricsDocument?>(null)
+    val lyricsDocument: StateFlow<LyricsDocument?> = _lyricsDocument.asStateFlow()
+
+    private val _lyricsSources = MutableStateFlow<List<LyricsSource>>(emptyList())
+    val lyricsSources: StateFlow<List<LyricsSource>> = _lyricsSources.asStateFlow()
+
+    private val _selectedLyricsSourceId = MutableStateFlow<String?>(null)
+    val selectedLyricsSourceId: StateFlow<String?> =
+        _selectedLyricsSourceId.asStateFlow()
+
+    private val _lyricsLoadState = MutableStateFlow(LyricsLoadState.IDLE)
+    val lyricsLoadState: StateFlow<LyricsLoadState> = _lyricsLoadState.asStateFlow()
+
+    private val _lyricsSettings = MutableStateFlow(lyricsSettingsStore.loadSettings())
+    val lyricsSettings: StateFlow<LyricsSettings> = _lyricsSettings.asStateFlow()
 
     private val _currentSongAudioTechnicalInfo = MutableStateFlow<SongAudioTechnicalInfo?>(null)
     val currentSongAudioTechnicalInfo: StateFlow<SongAudioTechnicalInfo?> =
@@ -634,6 +666,34 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { appearancePreferences.saveTheme(theme) }
     }
 
+    fun setLyricsSettings(settings: LyricsSettings) {
+        val normalizada = settings.normalizada()
+        if (_lyricsSettings.value == normalizada) return
+        _lyricsSettings.value = normalizada
+        lyricsSettingsStore.saveSettings(normalizada)
+    }
+
+    /** Cambia la fuente de letra y recuerda la elección para esta canción. */
+    fun selectLyricsSource(sourceId: String) {
+        val song = cancionActualParaLetras() ?: return
+        val source = _lyricsSources.value.firstOrNull { it.id == sourceId } ?: return
+
+        if (source.isEmbedded) {
+            lyricsSettingsStore.clearSelectedSource(song.id)
+        } else {
+            lyricsSettingsStore.saveSelectedSource(song.id, source.id)
+        }
+
+        _selectedLyricsSourceId.value = source.id
+        cargarDocumentoLetras(
+            song = song,
+            sources = _lyricsSources.value,
+            seleccionada = source,
+            embeddedText = letrasIncrustadasDe(song),
+            permitirAlternativa = false
+        )
+    }
+
     /** Aplica y persiste el acento de la paleta Oscuro inmediatamente. */
     fun setAppearanceAccent(accent: AppearanceAccent) {
         if (_selectedAppearanceAccent.value == accent) return
@@ -852,6 +912,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             syncActiveQueue()
             libraryScanCompleted = true
             _isScanning.value = false
+            lyricsSidecarsByFolder = emptyMap()
+            lyricsSidecars = emptyList()
+            cancionActualParaLetras()?.let { song ->
+                actualizarLetras(song, letrasIncrustadasDe(song))
+            }
             if (cacheLoaded && cachedEntries.isNotEmpty()) {
                 cachedEntries = emptyList()
                 libraryCache.save(emptyList())
@@ -864,6 +929,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         val baseline = visibleCache(folders).associateBy { it.id }
         val outcome = scanner.scan(folders, baseline)
+        actualizarIndiceLetras(folders, outcome)
 
         val merged = buildList {
             folders.forEach { folder ->
@@ -918,6 +984,27 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             .filterNot { it.uri in _revokedFolderUris.value }
             .map { Uri.parse(it.uri) }
 
+    /**
+     * Conserva el índice de letras de las carpetas que fallaron en esta pasada
+     * para no perder las coincidencias que ya se conocían.
+     */
+    private fun actualizarIndiceLetras(folders: List<Uri>, outcome: ScanOutcome) {
+        val porCarpeta = LinkedHashMap<String, List<LyricsSidecar>>()
+        folders.forEach { folder ->
+            val key = folder.toString()
+            porCarpeta[key] = if (key in outcome.failedFolders) {
+                lyricsSidecarsByFolder[key].orEmpty()
+            } else {
+                outcome.sidecarsByFolder[key].orEmpty()
+            }
+        }
+
+        lyricsSidecarsByFolder = porCarpeta
+        lyricsSidecars = porCarpeta.values
+            .flatten()
+            .distinctBy { it.uri }
+    }
+
     private fun hasPersistedReadPermission(uri: Uri): Boolean =
         appContext.contentResolver.persistedUriPermissions.any { permission ->
             permission.uri == uri && permission.isReadPermission
@@ -953,6 +1040,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
      * El resultado queda en [audioTags] y se reutiliza mientras la app viva.
      */
     fun cargarAudioTags(song: Song) {
+        prepararLetrasPara(song)
+
         // `containsKey` y no `?.let`: una canción sin letras también queda
         // cacheada (con `null`) y no debe releerse del disco en cada visita.
         if (audioTagsCache.containsKey(song.id)) {
@@ -970,6 +1059,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _currentSongAudioTechnicalInfo.value = technicalInfo?.let {
                 SongAudioTechnicalInfo(song.id, it)
             }
+            actualizarLetras(song, tags?.letras)
             return
         }
 
@@ -1012,18 +1102,130 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     publishAudioTechnicalInfo(song.id, requestId, AudioTechnicalInfo.from(tags))
                     _audioTags.value = tags
                     _audioTagsLoadState.value = AudioTagsLoadState.LOADED
+                    actualizarLetras(song, tags.letras)
                 } else {
                     _audioTagsLoadState.value = AudioTagsLoadState.ERROR
+                    actualizarLetras(song, null)
                 }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (_: Exception) {
                 if (isCurrentAudioTagsRequest(song.id, requestId)) {
                     _audioTagsLoadState.value = AudioTagsLoadState.ERROR
+                    actualizarLetras(song, null)
                 }
             }
         }
     }
+
+    /**
+     * Prepara el estado de letras al cambiar de canción. Evita que durante la
+     * lectura de etiquetas se muestre la letra de la canción anterior.
+     */
+    private fun prepararLetrasPara(song: Song) {
+        if (lyricsSongId == song.id) return
+
+        lyricsSongId = song.id
+        lyricsRequestId++
+        lyricsJob?.cancel()
+        lyricsJob = null
+        _lyricsDocument.value = null
+        _lyricsSources.value = emptyList()
+        _selectedLyricsSourceId.value = null
+        _lyricsLoadState.value = LyricsLoadState.LOADING
+    }
+
+    /**
+     * Cruza la letra incrustada con los sidecars encontrados en el escaneo y
+     * elige la fuente guardada o, por defecto, la etiqueta del archivo.
+     */
+    private fun actualizarLetras(song: Song, embeddedText: String?) {
+        if (lyricsSongId != song.id || _currentSongId.value != song.id) return
+
+        val coincidencias = LyricsMatcher.match(song.id, lyricsSidecars)
+        val incrustada = lyricsRepository.embeddedSource(embeddedText)
+        val fuentes = buildList {
+            incrustada?.let(::add)
+            coincidencias.forEach { add(lyricsRepository.sourceFromMatch(it)) }
+        }
+
+        _lyricsSources.value = fuentes
+        if (fuentes.isEmpty()) {
+            lyricsRequestId++
+            lyricsJob?.cancel()
+            lyricsJob = null
+            _lyricsDocument.value = null
+            _selectedLyricsSourceId.value = null
+            _lyricsLoadState.value = LyricsLoadState.LOADED
+            return
+        }
+
+        val guardada = lyricsSettingsStore.selectedSource(song.id)
+            ?.let { id -> fuentes.firstOrNull { it.id == id } }
+        val seleccionada = guardada ?: incrustada ?: fuentes.first()
+        _selectedLyricsSourceId.value = seleccionada.id
+
+        cargarDocumentoLetras(
+            song = song,
+            sources = fuentes,
+            seleccionada = seleccionada,
+            embeddedText = embeddedText,
+            permitirAlternativa = true
+        )
+    }
+
+    private fun cargarDocumentoLetras(
+        song: Song,
+        sources: List<LyricsSource>,
+        seleccionada: LyricsSource,
+        embeddedText: String?,
+        permitirAlternativa: Boolean
+    ) {
+        lyricsRequestId++
+        val requestId = lyricsRequestId
+        lyricsJob?.cancel()
+        _lyricsLoadState.value = LyricsLoadState.LOADING
+
+        lyricsJob = viewModelScope.launch {
+            val orden = if (permitirAlternativa) {
+                listOf(seleccionada) + sources.filterNot { it.id == seleccionada.id }
+            } else {
+                listOf(seleccionada)
+            }
+
+            var documento: LyricsDocument? = null
+            for (fuente in orden) {
+                if (!esSolicitudLetrasActual(song.id, requestId)) return@launch
+                documento = lyricsRepository.load(fuente, embeddedText)
+                if (documento != null) break
+            }
+
+            if (!esSolicitudLetrasActual(song.id, requestId)) return@launch
+
+            _lyricsDocument.value = documento
+            if (documento != null) {
+                _selectedLyricsSourceId.value = documento.source.id
+                _lyricsLoadState.value = LyricsLoadState.LOADED
+            } else {
+                _lyricsLoadState.value = LyricsLoadState.ERROR
+            }
+        }
+    }
+
+    private fun esSolicitudLetrasActual(songId: String, requestId: Long): Boolean =
+        requestId == lyricsRequestId &&
+            lyricsSongId == songId &&
+            _currentSongId.value == songId
+
+    private fun cancionActualParaLetras(): Song? {
+        val id = _currentSongId.value ?: return null
+        return _restoredSong.value?.takeIf { it.id == id }
+            ?: _songs.value.firstOrNull { it.id == id }
+            ?: canonicalSongs.firstOrNull { it.id == id }
+    }
+
+    private fun letrasIncrustadasDe(song: Song): String? =
+        audioTagsCache[song.id]?.letras
 
     private fun isCurrentAudioTagsRequest(songId: String, requestId: Long): Boolean =
         requestId == audioTagsRequestId && _currentSongId.value == songId
@@ -1351,6 +1553,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             controller.seekTo(position)
         }
     }
+
+    /**
+     * Posición actual del reproductor. La pantalla de letras la consulta con
+     * más frecuencia que [currentPosition] para animar el karaoke sin esperar
+     * al muestreo de 500 ms.
+     */
+    fun currentPlaybackPositionMs(): Long =
+        controller?.currentPosition?.coerceAtLeast(0L) ?: _currentPosition.value
 
     private fun startProgressTracking() {
         viewModelScope.launch {
