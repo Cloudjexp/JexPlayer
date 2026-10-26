@@ -1,15 +1,20 @@
 package com.cloudjex.jexplayer.ui.player
 
+import android.annotation.TargetApi
 import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
+import android.os.Build
 import android.provider.OpenableColumns
 import android.util.Log
 import com.cloudjex.jexplayer.data.local.FlacStreamReader
+import com.cloudjex.jexplayer.data.lyrics.buscarLetrasEnTag
 import com.cloudjex.jexplayer.data.model.AudioTechnicalInfo
 import com.cloudjex.jexplayer.data.model.AudioTags
+import org.jaudiotagger.audio.AudioFile
 import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.audio.mp4.Mp4TagReader
 import org.jaudiotagger.tag.Tag
 import org.jaudiotagger.tag.TagTextField
 import java.io.File
@@ -139,22 +144,33 @@ object FlacInfo {
                 }
             }
 
-            val audioFile = runCatching { AudioFileIO.read(archivo) }
+            var errorAudioFile: Throwable? = null
+            val audioFile: AudioFile? = runCatching { AudioFileIO.read(archivo) }
                 .recoverCatching { AudioFileIO.readMagic(archivo) }
                 .getOrElse { error ->
-                    error.printStackTrace()
-                    return null
+                    errorAudioFile = error
+                    null
                 }
-            val tag = audioFile.tag
-            val header = audioFile.audioHeader
+            // jAudioTagger rechaza los MP4 que llevan una pista de vídeo, aunque
+            // el audio y las etiquetas sean válidos. Su lector de etiquetas MP4
+            // no hace esa comprobación y permite recuperar la letra igualmente.
+            val tag: Tag? = audioFile?.tag ?: leerEtiquetaMp4(archivo)
+            if (tag == null) {
+                errorAudioFile?.printStackTrace()
+                return null
+            }
+            if (audioFile == null) {
+                Log.d("JexTags", "Etiquetas leídas con Mp4TagReader: uri=$uri")
+            }
+            val header = audioFile?.audioHeader
 
             val sampleRate = flac?.sampleRate
-                ?: runCatching { header.sampleRateAsNumber }.getOrDefault(0)
+                ?: runCatching { header?.sampleRateAsNumber ?: 0 }.getOrDefault(0)
             val bitRate = (flac?.bitRateBps
-                ?: runCatching { header.bitRateAsNumber * 1000L }.getOrDefault(0L))
+                ?: runCatching { (header?.bitRateAsNumber ?: 0) * 1000L }.getOrDefault(0L))
                 .coerceIn(0L, Int.MAX_VALUE.toLong())
                 .toInt()
-            val channels = flac?.canales ?: header.channels?.trim()?.toIntOrNull() ?: 0
+            val channels = flac?.canales ?: header?.channels?.trim()?.toIntOrNull() ?: 0
             val bitsPerSample = flac?.bitsPorMuestra ?: 0
             runCatching {
                 onTechnicalInfoAvailable(
@@ -168,12 +184,12 @@ object FlacInfo {
             }
 
             AudioTags(
-                letras = buscarLetras(tag),
+                letras = buscarLetrasEnTag(tag),
                 sampleRate = sampleRate,
                 bitRate = bitRate,
                 canales = channels,
                 duracionSegundos = flac?.duracionSegundos?.toInt()
-                    ?: runCatching { header.trackLength }.getOrDefault(0),
+                    ?: runCatching { header?.trackLength ?: 0 }.getOrDefault(0),
                 bitsPorMuestra = bitsPerSample,
                 muestrasTotales = flac?.muestrasTotales ?: 0L,
                 exacto = flac != null,
@@ -185,7 +201,7 @@ object FlacInfo {
                         Log.d(
                             "JexTags",
                             "uri=$uri flac=$flac campos=${campos.keys.toList()} " +
-                                "bitRate=${flac?.bitRateBps ?: header.bitRateAsNumber}"
+                                "bitRate=${flac?.bitRateBps ?: header?.bitRateAsNumber ?: 0}"
                         )
                     }
             )
@@ -198,29 +214,22 @@ object FlacInfo {
     }
 
     /**
-     * Busca el texto de las letras en el [Tag].
-     *
-     * No alcanza con `tag.getFirst(FieldKey.LYRICS)`: esa clave corresponde al
-     * frame ID3v2 `USLT`, mientras que los FLAC guardan las letras en un Vorbis
-     * Comment con la clave literal `LYRICS`. Según el mutagen y la versión que
-     * escribió el archivo, también puede aparecer como `UNSYNCEDLYRICS`.
+     * Lee las etiquetas de un MP4 directamente, sin pasar por la validación de
+     * audio de jAudioTagger. Es el respaldo para M4A/MP4 que incluyen una pista
+     * de vídeo y por eso [AudioFileIO] los rechaza.
      */
-    private fun buscarLetras(tag: Tag): String? {
-        val claves = listOf("LYRICS", "UNSYNCEDLYRICS", "LYRIC")
-
-        val desdeTags = claves.firstNotNullOfOrNull { clave ->
-            runCatching { tag.getFirst(clave) }.getOrNull()
-        }
-
-        val desdeCampos = claves.firstNotNullOfOrNull { clave ->
-            runCatching { tag.getFields(clave) }.getOrNull()
-                ?.firstNotNullOfOrNull { campo ->
-                    (campo as? TagTextField)?.content?.takeIf { it.isNotBlank() }
-                }
-        }
-
-        return (desdeTags ?: desdeCampos)?.trim()?.takeIf { it.isNotBlank() }
+    private fun leerEtiquetaMp4(archivo: File): Tag? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+        return leerEtiquetaMp4Directa(archivo)
     }
+
+    @TargetApi(Build.VERSION_CODES.O)
+    private fun leerEtiquetaMp4Directa(archivo: File): Tag? =
+        runCatching { Mp4TagReader().read(archivo.toPath()) }
+            .getOrNull()
+            ?.takeIf { etiqueta ->
+                runCatching { etiqueta.getFieldCount() > 0 }.getOrDefault(false)
+            }
 
     /**
      * Vuelca el contenido de [uri] a un archivo temporal en la caché para que
