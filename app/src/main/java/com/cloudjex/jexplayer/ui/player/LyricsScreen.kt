@@ -118,6 +118,11 @@ fun LyricsScreen(
         var lineaSeleccionada by remember { mutableStateOf(-1) }
         val posicionActual = posicionKaraoke()
 
+        LaunchedEffect(song.id) {
+            lineaSeleccionada = -1
+            listState.scrollToItem(0)
+        }
+
         // Solo cambia cuando se cruza otra línea, no en cada muestra de posición.
         val lineaPorTiempo by remember(listaSincronizada) {
             derivedStateOf {
@@ -188,14 +193,14 @@ fun LyricsScreen(
 
                         val scaleAnimado by animateFloatAsState(
                             targetValue = if (esLaSeleccionada) 1.12f else 1.0f,
-                            animationSpec = tween(durationMillis = 300),
+                            animationSpec = tween(durationMillis = 200),
                             label = "ScaleAnimation"
                         )
 
                         val colorAnimado by animateColorAsState(
                             targetValue = if (esLaSeleccionada) colorActivo
                             else colorActivo.copy(alpha = 0.4f),
-                            animationSpec = tween(durationMillis = 300),
+                            animationSpec = tween(durationMillis = 200),
                             label = "ColorAnimation"
                         )
 
