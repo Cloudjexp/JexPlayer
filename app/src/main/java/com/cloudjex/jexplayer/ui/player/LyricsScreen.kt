@@ -309,7 +309,7 @@ fun LyricsScreen(
             onNext = { viewModel.nextSong() },
             onShuffle = { viewModel.toggleShuffle() },
             onRepeat = { viewModel.toggleRepeat() },
-            onOpenPlayer = {},
+            onOpenPlayer = onClose,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
