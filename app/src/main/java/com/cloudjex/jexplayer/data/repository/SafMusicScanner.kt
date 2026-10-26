@@ -6,6 +6,8 @@ import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
+import com.cloudjex.jexplayer.data.lyrics.LyricsFormat
+import com.cloudjex.jexplayer.data.lyrics.LyricsSidecar
 import com.cloudjex.jexplayer.data.model.CachedSong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +17,7 @@ import kotlin.coroutines.coroutineContext
 
 data class ScanOutcome(
     val scannedByFolder: Map<String, List<CachedSong>>,
+    val sidecarsByFolder: Map<String, List<LyricsSidecar>>,
     val failedFolders: Set<String>
 )
 
@@ -28,15 +31,29 @@ class SafMusicScanner(
         cached: Map<String, CachedSong>
     ): ScanOutcome = withContext(Dispatchers.IO) {
         val scannedByFolder = LinkedHashMap<String, List<CachedSong>>()
+        val sidecarsByFolder = LinkedHashMap<String, List<LyricsSidecar>>()
         val failedFolders = mutableSetOf<String>()
 
         folderUris.forEach { treeUri ->
             val key = treeUri.toString()
             try {
                 val songs = mutableListOf<CachedSong>()
+                val sidecars = mutableListOf<LyricsSidecar>()
                 val rootDocumentId = DocumentsContract.getTreeDocumentId(treeUri)
-                scanDirectory(treeUri, rootDocumentId, cached, songs, depth = 0)
-                scannedByFolder[key] = songs.distinctBy { it.id }.sortedBy { it.title.lowercase() }
+                scanDirectory(
+                    treeUri = treeUri,
+                    parentDocumentId = rootDocumentId,
+                    cached = cached,
+                    out = songs,
+                    sidecars = sidecars,
+                    depth = 0
+                )
+                scannedByFolder[key] = songs
+                    .distinctBy { it.id }
+                    .sortedBy { it.title.lowercase() }
+                sidecarsByFolder[key] = sidecars
+                    .distinctBy { it.uri }
+                    .sortedBy { it.displayName.lowercase() }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (_: Exception) {
@@ -45,7 +62,11 @@ class SafMusicScanner(
             }
         }
 
-        ScanOutcome(scannedByFolder = scannedByFolder, failedFolders = failedFolders)
+        ScanOutcome(
+            scannedByFolder = scannedByFolder,
+            sidecarsByFolder = sidecarsByFolder,
+            failedFolders = failedFolders
+        )
     }
 
     private suspend fun scanDirectory(
@@ -53,6 +74,7 @@ class SafMusicScanner(
         parentDocumentId: String,
         cached: Map<String, CachedSong>,
         out: MutableList<CachedSong>,
+        sidecars: MutableList<LyricsSidecar>,
         depth: Int
     ) {
         coroutineContext.ensureActive()
@@ -84,7 +106,14 @@ class SafMusicScanner(
 
                     when {
                         mimeType == DocumentsContract.Document.MIME_TYPE_DIR -> {
-                            scanDirectory(treeUri, documentId, cached, out, depth + 1)
+                            scanDirectory(
+                                treeUri = treeUri,
+                                parentDocumentId = documentId,
+                                cached = cached,
+                                out = out,
+                                sidecars = sidecars,
+                                depth = depth + 1
+                            )
                         }
 
                         isAudio(displayName, mimeType) -> {
@@ -93,6 +122,23 @@ class SafMusicScanner(
                             out.add(
                                 resolveSong(documentUri, displayName, size, lastModified, cached)
                             )
+                        }
+
+                        else -> {
+                            val formato = LyricsFormat.fromFileName(displayName)
+                            if (formato != null) {
+                                val documentUri =
+                                    DocumentsContract.buildDocumentUriUsingTree(
+                                        treeUri,
+                                        documentId
+                                    )
+                                sidecars += LyricsSidecar(
+                                    uri = documentUri.toString(),
+                                    displayName = displayName,
+                                    parentDocumentId = parentDocumentId,
+                                    format = formato
+                                )
+                            }
                         }
                     }
                 }

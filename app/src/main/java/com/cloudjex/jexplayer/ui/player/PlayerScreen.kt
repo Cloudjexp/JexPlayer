@@ -89,6 +89,11 @@ fun PlayerScreen(
     val audioTags by viewModel.audioTags.collectAsState()
     val audioTagsLoadState by viewModel.audioTagsLoadState.collectAsState()
     val currentSongAudioTechnicalInfo by viewModel.currentSongAudioTechnicalInfo.collectAsState()
+    val lyricsDocument by viewModel.lyricsDocument.collectAsState()
+    val lyricsSources by viewModel.lyricsSources.collectAsState()
+    val selectedLyricsSourceId by viewModel.selectedLyricsSourceId.collectAsState()
+    val lyricsLoadState by viewModel.lyricsLoadState.collectAsState()
+    val lyricsSettings by viewModel.lyricsSettings.collectAsState()
 
     val currentSong = songs.find { it.id == currentSongId }
         ?: restoredSong?.takeIf { it.id == currentSongId }
@@ -144,12 +149,15 @@ fun PlayerScreen(
             LyricsScreen(
                 onSeek = { viewModel.seekTo(it) },
                 song = currentSong,
-                tags = audioTags.takeIf {
-                    audioTagsLoadState == AudioTagsLoadState.LOADED
-                },
-                tagsLoadState = audioTagsLoadState,
-                onClose = { showLyrics = false })
-
+                lyricsDocument = lyricsDocument,
+                lyricsSources = lyricsSources,
+                selectedLyricsSourceId = selectedLyricsSourceId,
+                lyricsLoadState = lyricsLoadState,
+                settings = lyricsSettings,
+                onSelectLyricsSource = { viewModel.selectLyricsSource(it) },
+                onLyricsSettingsChange = { viewModel.setLyricsSettings(it) },
+                onClose = { showLyrics = false }
+            )
         }
     }
 }
