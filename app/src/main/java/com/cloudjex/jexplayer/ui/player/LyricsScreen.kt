@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
@@ -19,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -46,6 +49,7 @@ import com.cloudjex.jexplayer.data.lyrics.LyricsSource
 import com.cloudjex.jexplayer.data.lyrics.LyricsTranslationSupport
 import com.cloudjex.jexplayer.data.model.LyricsSettings
 import com.cloudjex.jexplayer.data.model.Song
+import com.cloudjex.jexplayer.ui.home.MiniPlayer
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
@@ -89,6 +93,10 @@ fun LyricsScreen(
         .sp
     val soporteTraduccion = lyricsDocument?.translationSupport
         ?: LyricsTranslationSupport.UNAVAILABLE_PATTERN
+    val viewModel: MusicViewModel = viewModel()
+    val isPlaying by viewModel.isPlaying.collectAsState()
+    val isShuffleEnabled by viewModel.isShuffleEnabled.collectAsState()
+    val repeatMode by viewModel.repeatMode.collectAsState()
 
     Box(
         Modifier.fillMaxSize()
@@ -172,7 +180,8 @@ fun LyricsScreen(
             listaSincronizada.isNotEmpty() -> {
                 LazyColumn(
                     state = listState, // 3. esto es para controlar el auto scroll
-                    modifier = Modifier.padding(top = 38.dp, start = 40.dp, end = 40.dp)
+                    modifier = Modifier.padding(top = 38.dp, start = 40.dp, end = 40.dp),
+                    contentPadding = PaddingValues(bottom = 600.dp)
                 ) {
                     itemsIndexed(listaSincronizada) { indice, linealetra ->
                         val esLaSeleccionada = (indice == lineaSeleccionada)
@@ -284,6 +293,23 @@ fun LyricsScreen(
                 contentDescription = "Opciones de letra"
             )
         }
+
+        MiniPlayer(
+            song = song,
+            isPlaying = isPlaying,
+            isShuffleEnabled = isShuffleEnabled,
+            repeatMode = repeatMode,
+            onPrevious = { viewModel.previousSong() },
+            onPlayPause = { viewModel.togglePlayPause() },
+            onNext = { viewModel.nextSong() },
+            onShuffle = { viewModel.toggleShuffle() },
+            onRepeat = { viewModel.toggleRepeat() },
+            onOpenPlayer = {},
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 10.dp)
+        )
 
         if (mostrarOpciones) {
             LyricsOptionsSheet(
