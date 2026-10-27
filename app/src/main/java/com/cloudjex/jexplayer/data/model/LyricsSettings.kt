@@ -32,13 +32,34 @@ enum class LyricsFontPreset(
     }
 }
 
+/**
+ * Movimiento de las líneas de letra.
+ *
+ * [ACTUAL] conserva la transición breve de siempre: la línea activa crece y el
+ * resto se atenúa. [ENFOQUE] deja la línea activa nítida y difumina las demás
+ * según su distancia, al estilo de Mornye.
+ */
+enum class LyricsLineMotion(
+    val storageKey: String,
+    val label: String
+) {
+    ACTUAL("actual", "Actual"),
+    ENFOQUE("enfoque", "Enfoque");
+
+    companion object {
+        fun fromStorageKey(value: String?): LyricsLineMotion =
+            entries.firstOrNull { it.storageKey == value } ?: ACTUAL
+    }
+}
+
 /** Apariencia persistente de la pantalla de letras. */
 data class LyricsSettings(
     val colorPreset: LyricsColorPreset = LyricsColorPreset.GRIS,
     val fontPreset: LyricsFontPreset = LyricsFontPreset.SANS,
     val italic: Boolean = true,
     val fontSizeSp: Int = DEFAULT_FONT_SIZE_SP,
-    val showTranslation: Boolean = false
+    val showTranslation: Boolean = false,
+    val lineMotion: LyricsLineMotion = LyricsLineMotion.ACTUAL
 ) {
     fun normalizada(): LyricsSettings = copy(
         fontSizeSp = fontSizeSp.coerceIn(MIN_FONT_SIZE_SP, MAX_FONT_SIZE_SP)

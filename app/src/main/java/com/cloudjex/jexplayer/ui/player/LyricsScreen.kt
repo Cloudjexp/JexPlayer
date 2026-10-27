@@ -1,6 +1,8 @@
 package com.cloudjex.jexplayer.ui.player
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.EaseInOutCubic
+import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -28,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
@@ -44,6 +47,7 @@ import com.cloudjex.jexplayer.data.lyrics.LyricsDocument
 import com.cloudjex.jexplayer.data.lyrics.LyricsLoadState
 import com.cloudjex.jexplayer.data.lyrics.LyricsSource
 import com.cloudjex.jexplayer.data.lyrics.LyricsTranslationSupport
+import com.cloudjex.jexplayer.data.model.LyricsLineMotion
 import com.cloudjex.jexplayer.data.model.LyricsSettings
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.ui.home.MiniPlayer
@@ -86,6 +90,7 @@ fun LyricsScreen(
     val familiaLetra = settings.fontPreset.familia
     val estiloLetra = if (settings.italic) FontStyle.Italic else FontStyle.Normal
     val tamanoLetra = settings.fontSizeSp.sp
+    val modoEnfoque = settings.lineMotion == LyricsLineMotion.ENFOQUE
     val tamanoTraduccion = (settings.fontSizeSp * 0.78f)
         .coerceAtLeast(11f)
         .sp
@@ -199,18 +204,62 @@ fun LyricsScreen(
                 ) {
                     itemsIndexed(listaSincronizada) { indice, linealetra ->
                         val esLaSeleccionada = (indice == lineaSeleccionada)
+                        val distancia = abs(indice - lineaSeleccionada)
 
+                        // Modo actual: la línea activa crece y el resto baja de
+                        // opacidad. Modo enfoque: la activa queda nítida y las
+                        // demás se alejan, atenúan y difuminan según su distancia.
+                        val escalaObjetivo = when {
+                            modoEnfoque && esLaSeleccionada -> 1f
+                            modoEnfoque -> 0.96f
+                            esLaSeleccionada -> 1.12f
+                            else -> 1f
+                        }
                         val scaleAnimado by animateFloatAsState(
-                            targetValue = if (esLaSeleccionada) 1.12f else 1.0f,
-                            animationSpec = tween(durationMillis = 200),
+                            targetValue = escalaObjetivo,
+                            animationSpec = if (modoEnfoque) {
+                                tween(durationMillis = 420, easing = EaseOutCubic)
+                            } else {
+                                tween(durationMillis = 200)
+                            },
                             label = "ScaleAnimation"
                         )
 
+                        // Todo lo que no es la línea activa usa el mismo color
+                        // pendiente del karaoke. Así, al cambiar de verso, el
+                        // texto normal y el Canvas arrancan con el mismo alpha
+                        // y no hay un bajón de opacidad.
+                        val colorObjetivo = if (esLaSeleccionada) {
+                            colorActivo
+                        } else {
+                            colorPendiente
+                        }
                         val colorAnimado by animateColorAsState(
-                            targetValue = if (esLaSeleccionada) colorActivo
-                            else colorActivo.copy(alpha = 0.4f),
-                            animationSpec = tween(durationMillis = 200),
+                            targetValue = colorObjetivo,
+                            animationSpec = if (modoEnfoque) {
+                                tween(durationMillis = 420, easing = EaseInOutCubic)
+                            } else {
+                                tween(durationMillis = 200)
+                            },
                             label = "ColorAnimation"
+                        )
+
+                        val blurObjetivo = if (modoEnfoque && !esLaSeleccionada) {
+                            when (distancia) {
+                                1 -> 2f
+                                2 -> 3f
+                                else -> 4f
+                            }
+                        } else {
+                            0f
+                        }
+                        val blurAnimado by animateFloatAsState(
+                            targetValue = blurObjetivo,
+                            animationSpec = tween(
+                                durationMillis = 420,
+                                easing = EaseInOutCubic
+                            ),
+                            label = "BlurAnimation"
                         )
 
                         val traduccion = linealetra.traduccion
@@ -229,6 +278,17 @@ fun LyricsScreen(
                                     onSeek(linealetra.tiempo)
                                     lineaSeleccionada = indice
                                 }
+                                .then(
+                                    if (blurAnimado > 0.05f) {
+                                        Modifier.blur(
+                                            radius = blurAnimado.dp,
+                                            edgeTreatment =
+                                                BlurredEdgeTreatment.Unbounded
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
+                                )
                         ) {
                             if (
                                 esLaSeleccionada &&

@@ -38,6 +38,7 @@ import com.cloudjex.jexplayer.data.lyrics.LyricsSource
 import com.cloudjex.jexplayer.data.lyrics.LyricsTranslationSupport
 import com.cloudjex.jexplayer.data.model.LyricsColorPreset
 import com.cloudjex.jexplayer.data.model.LyricsFontPreset
+import com.cloudjex.jexplayer.data.model.LyricsLineMotion
 import com.cloudjex.jexplayer.data.model.LyricsSettings
 import com.cloudjex.jexplayer.data.model.LyricsStylePreset
 
@@ -262,6 +263,39 @@ fun LyricsOptionsSheet(
                     )
                 }
             }
+
+            Text(
+                text = "Transición",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                LyricsLineMotion.entries.forEach { motion ->
+                    FilterChip(
+                        selected = settings.lineMotion == motion,
+                        onClick = {
+                            onSettingsChange(settings.copy(lineMotion = motion))
+                        },
+                        label = { Text(motion.label) }
+                    )
+                }
+            }
+            Text(
+                text = if (settings.lineMotion == LyricsLineMotion.ENFOQUE) {
+                    "La línea activa queda nítida y las demás se alejan y difuminan según su distancia."
+                } else {
+                    "La línea activa crece y el resto se atenúa, sin desenfoque."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
 
             Row(
                 modifier = Modifier
