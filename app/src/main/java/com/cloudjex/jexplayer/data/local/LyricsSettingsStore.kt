@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.cloudjex.jexplayer.data.model.LyricsColorPreset
 import com.cloudjex.jexplayer.data.model.LyricsFontPreset
+import com.cloudjex.jexplayer.data.model.LyricsLineMotion
 import com.cloudjex.jexplayer.data.model.LyricsSettings
 import org.json.JSONObject
 
@@ -30,7 +31,10 @@ internal class LyricsSettingsStore private constructor(
             KEY_FONT_SIZE,
             LyricsSettings.DEFAULT_FONT_SIZE_SP
         ),
-        showTranslation = preferences.getBoolean(KEY_SHOW_TRANSLATION, false)
+        showTranslation = preferences.getBoolean(KEY_SHOW_TRANSLATION, false),
+        lineMotion = LyricsLineMotion.fromStorageKey(
+            preferences.getString(KEY_LINE_MOTION, null)
+        )
     ).normalizada()
 
     fun saveSettings(settings: LyricsSettings) {
@@ -41,6 +45,7 @@ internal class LyricsSettingsStore private constructor(
             .putBoolean(KEY_ITALIC, normalizada.italic)
             .putInt(KEY_FONT_SIZE, normalizada.fontSizeSp)
             .putBoolean(KEY_SHOW_TRANSLATION, normalizada.showTranslation)
+            .putString(KEY_LINE_MOTION, normalizada.lineMotion.storageKey)
             .apply()
     }
 
@@ -100,6 +105,7 @@ internal class LyricsSettingsStore private constructor(
         private const val KEY_ITALIC = "lyrics_italic"
         private const val KEY_FONT_SIZE = "lyrics_font_size"
         private const val KEY_SHOW_TRANSLATION = "lyrics_show_translation"
+        private const val KEY_LINE_MOTION = "lyrics_line_motion"
         private const val KEY_SOURCES = "lyrics_sources"
         private const val PREFERENCES_NAME = "jexplayer_lyrics"
 
