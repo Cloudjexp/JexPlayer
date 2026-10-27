@@ -133,6 +133,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var cacheLoaded = false
     private var libraryScanCompleted = false
     private var canonicalSongs: List<Song> = emptyList()
+    private var librarySortJob: Job? = null
 
     private val playerListener = object : Player.Listener {
 
@@ -639,7 +640,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun publishSortedLibrary() {
-        _songs.value = LibrarySongSorter.sort(canonicalSongs, _librarySortSettings.value)
+        // Ordenar miles de canciones incluye normalización y trabajo del comparador.
+        // Nunca se hace en el dispatcher principal: cambiar el orden o terminar un
+        // escaneo no debe competir con el plazo de un frame de Compose.
+        librarySortJob?.cancel()
+        val source = canonicalSongs
+        val settings = _librarySortSettings.value
+        librarySortJob = viewModelScope.launch(Dispatchers.Default) {
+            val sorted = LibrarySongSorter.sort(source, settings)
+            withContext(Dispatchers.Main.immediate) {
+                if (canonicalSongs === source && _librarySortSettings.value == settings) {
+                    _songs.value = sorted
+                }
+            }
+        }
     }
 
     private fun setCanonicalSongs(songs: List<Song>) {

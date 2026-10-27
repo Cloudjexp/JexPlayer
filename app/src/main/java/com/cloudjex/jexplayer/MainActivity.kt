@@ -33,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -42,8 +43,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.cloudjex.jexplayer.data.local.LibraryScrollPosition
 import com.cloudjex.jexplayer.data.local.LibraryScrollPositionStore
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,7 +69,6 @@ import com.cloudjex.jexplayer.ui.theme.JexPlayerTheme
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 
-@OptIn(FlowPreview::class)
 class MainActivity : ComponentActivity() {
 
     private val folderPickerLauncher = registerForActivityResult(
@@ -102,7 +102,6 @@ class MainActivity : ComponentActivity() {
                 } else {
                     val folders by vm.folders.collectAsState()
                      val restoredScreen by vm.showPlayer.collectAsState()
-                     val currentSongId by vm.currentSongId.collectAsState()
                       val songs by vm.songs.collectAsState()
                       val availableUpdate by vm.availableUpdate.collectAsState()
                      val libraryScrollStore = remember {
@@ -115,30 +114,28 @@ class MainActivity : ComponentActivity() {
                              savedLibraryPosition.firstVisibleItemScrollOffset
                      )
                      var pendingLibraryFollowId by remember { mutableStateOf<String?>(null) }
-                     var lastObservedSongId by remember { mutableStateOf(currentSongId) }
+                     val currentScreen = rememberUpdatedState(restoredScreen)
                       var settingsOpen by rememberSaveable { mutableStateOf(false) }
                       var selectedTab by rememberSaveable { mutableStateOf(0) }
 
-                     // Se escribe solo cuando la posición se estabiliza. La lista puede
-                     // estar desmontada al abrir el reproductor, pero su estado sigue
-                     // viviendo en esta composición.
-                     LaunchedEffect(libraryListState, songs.size) {
+                     // Se escribe solo cuando el gesto termina. Observar el offset
+                     // directamente creaba un objeto y reactivaba el debounce en cada
+                     // frame de scroll, sin aportar nada mientras el dedo se movía.
+                     LaunchedEffect(libraryListState, songs.size, libraryScrollStore) {
                          if (songs.isEmpty()) return@LaunchedEffect
 
-                         snapshotFlow {
-                             LibraryScrollPosition(
-                                 firstVisibleItemIndex = libraryListState.firstVisibleItemIndex,
-                                 firstVisibleItemScrollOffset =
-                                     libraryListState.firstVisibleItemScrollOffset
-                             )
-                         }
+                         snapshotFlow { libraryListState.isScrollInProgress }
                              .distinctUntilChanged()
-                             .debounce(400)
-                             .collect { position ->
+                             .collectLatest { scrolling ->
+                                 if (scrolling) return@collectLatest
+                                 delay(400)
                                  libraryScrollStore.save(
-                                     position.copy(
-                                         firstVisibleItemIndex = position.firstVisibleItemIndex
-                                             .coerceIn(0, songs.lastIndex)
+                                     LibraryScrollPosition(
+                                         firstVisibleItemIndex =
+                                             libraryListState.firstVisibleItemIndex
+                                                 .coerceIn(0, songs.lastIndex),
+                                         firstVisibleItemScrollOffset =
+                                             libraryListState.firstVisibleItemScrollOffset
                                      )
                                  )
                              }
@@ -165,13 +162,17 @@ class MainActivity : ComponentActivity() {
 
                      // La biblioteca se desmonta mientras se muestra el reproductor.
                      // Conservamos aquí el último cambio de identidad ocurrido durante
-                     // ese intervalo, sin confundirlo con la restauración inicial.
-                     LaunchedEffect(currentSongId) {
-                         if (currentSongId != lastObservedSongId) {
-                             if (restoredScreen == true && currentSongId != null) {
-                                 pendingLibraryFollowId = currentSongId
+                     // ese intervalo. Se recoge el Flow dentro de la corrutina para que
+                     // un cambio de pista no recomponga toda la jerarquía de la Activity.
+                     LaunchedEffect(vm) {
+                         var lastObservedSongId = vm.currentSongId.value
+                         vm.currentSongId.collect { songId ->
+                             if (songId != lastObservedSongId) {
+                                 if (currentScreen.value == true && songId != null) {
+                                     pendingLibraryFollowId = songId
+                                 }
+                                 lastObservedSongId = songId
                              }
-                             lastObservedSongId = currentSongId
                          }
                      }
 

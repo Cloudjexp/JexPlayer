@@ -125,6 +125,63 @@ class AlbumArtStoreTest {
     }
 
     @Test
+    fun sharedStoreReusesOneFileForIdenticalArtwork() {
+        val store = store()
+        val bytes = byteArrayOf(7, 7, 7, 7)
+
+        val first = store.storeShared(bytes)
+        val second = store.storeShared(bytes)
+
+        assertTrue(first != null && first.isFile)
+        assertEquals(first, second)
+        assertEquals(1, directory.listFiles().orEmpty().count { it.extension == "img" })
+    }
+
+    @Test
+    fun sharedStoreWritesDifferentContentToDifferentFiles() {
+        val store = store()
+
+        val first = store.storeShared(byteArrayOf(1, 2, 3))
+        val second = store.storeShared(byteArrayOf(4, 5, 6))
+
+        assertTrue(first != null && second != null)
+        assertNotEquals(first, second)
+    }
+
+    @Test
+    fun legacyArtworkMigrationDeduplicatesByContentAndIsIdempotent() {
+        val store = store()
+        val bytes = byteArrayOf(9, 8, 7, 6)
+        val legacyA = store.store("content://a/1", 10L, 20L, bytes)!!
+        val legacyB = store.store("content://a/2", 11L, 21L, bytes)!!
+
+        val sharedA = store.migrateToShared(legacyA.toURI().toString())
+        val sharedB = store.migrateToShared(legacyB.toURI().toString())
+
+        assertTrue(sharedA != null && sharedA.isFile)
+        assertEquals(sharedA, sharedB)
+        assertEquals(sharedA, store.migrateToShared(sharedA!!.toURI().toString()))
+    }
+
+    @Test
+    fun migrationKeepsUriForMissingOrForeignFiles() {
+        val store = store()
+
+        assertEquals(null, store.migrateToShared(null))
+        assertEquals(null, store.migrateToShared("file:/definitely/missing.img"))
+        assertFalse(store.existsUri("file:/definitely/missing.img"))
+    }
+
+    @Test
+    fun contentCacheKeyIsStableAcrossDirectories() {
+        val keyA = AlbumArtStore.contentCacheKey("file:/one/sha-abc.img")
+        val keyB = AlbumArtStore.contentCacheKey("file:///two/sha-abc.img")
+
+        assertEquals("sha-abc", keyA)
+        assertEquals(keyA, keyB)
+    }
+
+    @Test
     fun storeReturnsNullWhenDirectoryCannotBeCreated() {
         // El "directorio" es en realidad un archivo: la escritura debe fallar sin lanzar.
         val blocked = File(temporary.root, "blocked")
