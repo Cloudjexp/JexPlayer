@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "JexPlayer"
 include(":app")
+include(":benchmark")

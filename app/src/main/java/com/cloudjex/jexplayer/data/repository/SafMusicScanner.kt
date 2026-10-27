@@ -159,13 +159,25 @@ class SafMusicScanner(
             cachedSong.metadataScanned == true &&
             ScanReusePolicy.canReuseSong(cachedSong, size, lastModified) {
                 // Solo se consulta el disco si la entrada declara una portada.
-                albumArtStore.exists(songId, size, lastModified)
+                albumArtStore.existsUri(cachedSong.albumArtUri)
             }
         ) {
-            return cachedSong
+            return cachedSong.withSharedArtwork()
         }
 
         return extractSong(documentUri, displayName, size, lastModified)
+    }
+
+    /**
+     * Migra de forma perezosa las portadas antiguas (una por canción) al
+     * almacén por contenido. La lectura y el hash ocurren dentro del escaneo,
+     * que ya corre en IO; nunca en el hilo principal.
+     */
+    private fun CachedSong.withSharedArtwork(): CachedSong {
+        val oldUri = albumArtUri ?: return this
+        val shared = albumArtStore.migrateToShared(oldUri) ?: return this
+        val newUri = Uri.fromFile(shared).toString()
+        return if (newUri == oldUri) this else copy(albumArtUri = newUri)
     }
 
     private fun readLong(cursor: android.database.Cursor, columnIndex: Int): Long? =
@@ -226,7 +238,7 @@ class SafMusicScanner(
 
             metadataScanned = true
             albumArtScanned = true
-            albumArtUri = resolveAlbumArt(songId, size, lastModified, retriever)
+            albumArtUri = resolveAlbumArt(retriever)
         } catch (_: Exception) {
             // Metadatos no disponibles: se conservan los valores por defecto y la
             // portada queda sin comprobar para reintentarla cuando el archivo cambie.
@@ -252,20 +264,13 @@ class SafMusicScanner(
         )
     }
 
-    private fun resolveAlbumArt(
-        songId: String,
-        size: Long?,
-        lastModified: Long?,
-        retriever: MediaMetadataRetriever
-    ): String? {
-        albumArtStore.fileFor(songId, size, lastModified)
-            .takeIf { it.isFile }
-            ?.let { return Uri.fromFile(it).toString() }
-
+    private fun resolveAlbumArt(retriever: MediaMetadataRetriever): String? {
         val picture = runCatching { retriever.embeddedPicture }.getOrNull()
         if (picture == null || picture.isEmpty()) return null
 
-        val stored = albumArtStore.store(songId, size, lastModified, picture) ?: return null
+        // Se guarda por contenido: las pistas que comparten los mismos bytes de
+        // portada comparten también una única entrada en la caché de Coil.
+        val stored = albumArtStore.storeShared(picture) ?: return null
         return Uri.fromFile(stored).toString()
     }
 

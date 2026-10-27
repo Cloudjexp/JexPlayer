@@ -1,7 +1,9 @@
 package com.cloudjex.jexplayer.data.model
 
 import android.net.Uri
+import androidx.compose.runtime.Immutable
 
+@Immutable
 data class Song(
     /**
      * Identificador estable y único. Para las canciones obtenidas por SAF es la

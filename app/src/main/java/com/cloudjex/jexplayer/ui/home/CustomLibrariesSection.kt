@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -297,17 +298,19 @@ fun CustomLibraryDetail(
                 )
             }
         } else {
+            val listState = rememberLazyListState()
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
+                state = listState,
                 contentPadding = PaddingValues(
                     top = 8.dp,
                     bottom = bottomContentPadding + 8.dp
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(librarySongs, key = { it.id }) { song ->
+                items(librarySongs, key = { it.id }, contentType = { "song" }) { song ->
                     SongItem(
                         song = song,
                         isCurrent = song.id == currentSongId,
@@ -323,7 +326,8 @@ fun CustomLibraryDetail(
                         onAddToLibraryClick = { onAddToLibrary(song) },
                         onRemoveFromLibraryClick = {
                             viewModel.removeSongFromCustomLibrary(library.id, song.id)
-                        }
+                        },
+                        scrollState = listState
                     )
                 }
             }

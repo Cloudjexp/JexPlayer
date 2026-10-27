@@ -1,5 +1,6 @@
 package com.cloudjex.jexplayer.ui.home
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -44,23 +45,27 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
+import com.cloudjex.jexplayer.data.artwork.ArtworkRepository
+import com.cloudjex.jexplayer.data.local.AlbumArtStore
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.data.model.LibrarySortSettings
@@ -70,6 +75,8 @@ import com.cloudjex.jexplayer.viewmodel.PlaybackContext
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
 import com.cloudjex.jexplayer.ui.navigation.JexBottomBar
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 @Composable
 fun HomeScreen(
@@ -93,7 +100,6 @@ fun HomeScreen(
     val folders by viewModel.folders.collectAsState()
     val revokedFolderUris by viewModel.revokedFolderUris.collectAsState()
     val folderMessage by viewModel.folderMessage.collectAsState()
-    val currentSongId by viewModel.currentSongId.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val customLibraries by viewModel.customLibraries.collectAsState()
     val customLibrariesReady by viewModel.customLibrariesReady.collectAsState()
@@ -139,6 +145,8 @@ fun HomeScreen(
         }
     }
 
+    // Estas proyecciones no dependen del progreso. Al recordarlas, una actualización
+    // del reproductor no recorre una biblioteca de miles de entradas.
     val filteredSongs = remember(songs, searchQuery, selectedFolderUri) {
         songs.filter { song ->
             (selectedFolderUri == null || song.id.startsWith("${selectedFolderUri}/")) &&
@@ -147,8 +155,8 @@ fun HomeScreen(
                     song.album.contains(searchQuery, ignoreCase = true))
         }
     }
-    val favoriteSongs = songs.filter { song ->
-        song.id in favoriteIds
+    val favoriteSongs = remember(songs, favoriteIds) {
+        songs.filter { it.id in favoriteIds }
     }
 
     Box(
@@ -260,6 +268,9 @@ fun HomeScreen(
 
             // PESTAÑA 1: LISTAS
             1 -> {
+                // La pestaña de música no necesita observar la canción actual; al
+                // recogerlo aquí, un cambio de pista no recompone la biblioteca.
+                val currentSongId by viewModel.currentSongId.collectAsState()
                 val selectedLibrary = selectedLibraryId?.let { id ->
                     customLibraries.firstOrNull { it.id == id }
                 }
@@ -405,7 +416,9 @@ private fun FavoritesPlaylist(
                 style = MaterialTheme.typography.bodyMedium
             )
         } else {
+            val listState = rememberLazyListState()
             LazyColumn(
+                state = listState,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     top = 0.dp,
                     bottom = bottomContentPadding + 8.dp
@@ -413,7 +426,8 @@ private fun FavoritesPlaylist(
             ) {
                 items(
                     favoriteSongs,
-                    key = { it.id }
+                    key = { it.id },
+                    contentType = { "song" }
                 ) { song ->
                     SongItem(
                         song = song,
@@ -427,7 +441,8 @@ private fun FavoritesPlaylist(
                         },
                         onAddToLibraryClick = {
                             onAddToLibrary(song)
-                        }
+                        },
+                        scrollState = listState
                     )
                 }
             }
@@ -482,7 +497,11 @@ private fun LibrarySongList(
     }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            // Expone un recurso estable para el Macrobenchmark de scroll.
+            .testTag("library_list")
+            .semantics { testTagsAsResourceId = true },
         state = listState,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
             top = 8.dp,
@@ -500,7 +519,8 @@ private fun LibrarySongList(
                 isFavorite = song.id in favoriteIds,
                 onClick = { viewModel.playSong(song, PlaybackContext.Library, filteredSongs) },
                 onFavoriteClick = { viewModel.toggleFavorite(song.id) },
-                onAddToLibraryClick = { onAddToLibrary(song) }
+                onAddToLibraryClick = { onAddToLibrary(song) },
+                scrollState = listState
             )
         }
     }
@@ -517,7 +537,8 @@ private fun MiniPlayerHost(
     val isPlaying by viewModel.isPlaying.collectAsState()
     val isShuffleEnabled by viewModel.isShuffleEnabled.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
-    val currentSong = songs.find { it.id == currentSongId }
+    val songsById = remember(songs) { songs.associateBy { it.id } }
+    val currentSong = songsById[currentSongId]
         ?: restoredSong?.takeIf { it.id == currentSongId }
 
     if (currentSong != null) {
@@ -781,37 +802,82 @@ private fun FoldersFilterRow(
 internal fun SongArtwork(
     song: Song,
     size: Dp,
-    cornerRadius: Dp
+    cornerRadius: Dp,
+    scrollState: LazyListState? = null
 ) {
     val placeholderColor = MaterialTheme.colorScheme.secondaryContainer
-    val placeholderPainter = remember(placeholderColor) { ColorPainter(placeholderColor) }
     val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
     val density = LocalDensity.current
     val context = LocalPlatformContext.current
+    val repository = remember(context) { ArtworkRepository.from(context) }
     val sizePx = with(density) { size.roundToPx() }
-    val imageRequest = remember(song.albumArtUri, sizePx) {
-        ImageRequest.Builder(context)
-            .data(song.albumArtUri)
-            // Las portadas originales pueden ser grandes; una fila solo necesita
-            // los píxeles de su miniatura. La clave incluye el tamaño para no
-            // mezclar la portada de 48 dp con la de 82 dp.
-            .size(sizePx)
-            .memoryCacheKey("${song.albumArtUri}|$sizePx")
-            .diskCacheKey("${song.albumArtUri}|$sizePx")
-            .build()
+    val cacheKey = remember(song.albumArtUri, sizePx) {
+        song.albumArtUri?.let {
+            "${AlbumArtStore.contentCacheKey(it.toString())}|$sizePx"
+        }
+    }
+    val imageRequest = remember<ImageRequest?>(song.albumArtUri, cacheKey) {
+        val artworkUri = song.albumArtUri
+        val key = cacheKey
+        if (artworkUri != null && key != null) {
+            ImageRequest.Builder(context)
+                .data(artworkUri)
+                // Se decodifica solo al tamaño de la fila, nunca a resolución
+                // completa. La clave por contenido permite que todas las pistas
+                // del mismo álbum reutilicen un único bitmap en memoria.
+                .size(sizePx)
+                .memoryCacheKey(key)
+                .build()
+        } else {
+            null
+        }
     }
 
-    AsyncImage(
-        model = imageRequest,
-        contentDescription = song.album,
+    // La consulta a la caché de Coil es síncrona pero barata: no hace E/S ni
+    // decodifica. Si la portada ya está en memoria se muestra durante el scroll.
+    var image by remember(cacheKey) {
+        mutableStateOf(cacheKey?.let(repository::peek))
+    }
+
+    LaunchedEffect(cacheKey, imageRequest, scrollState) {
+        val key = cacheKey ?: return@LaunchedEffect
+        val request = imageRequest ?: return@LaunchedEffect
+        if (image != null) return@LaunchedEffect
+
+        suspend fun loadWhenIdle() {
+            if (image == null) {
+                repository.load(key, request)?.let { image = it }
+            }
+        }
+
+        if (scrollState == null) {
+            loadWhenIdle()
+        } else {
+            // Se observa el estado del scroll desde la corrutina, no desde la
+            // composición: empezar o terminar un gesto ya no recompone las filas.
+            snapshotFlow { scrollState.isScrollInProgress }
+                .distinctUntilChanged()
+                .collectLatest { scrolling ->
+                    if (!scrolling) loadWhenIdle()
+                }
+        }
+    }
+
+    Box(
         modifier = Modifier
             .size(size)
-            .clip(shape),
-        contentScale = ContentScale.Crop,
-        placeholder = placeholderPainter,
-        error = placeholderPainter,
-        fallback = placeholderPainter
-    )
+            .clip(shape)
+            .background(placeholderColor)
+    ) {
+        image?.let { bitmap ->
+            Image(
+                bitmap = bitmap,
+                contentDescription = song.album,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        }
+    }
 }
 
 @Composable
@@ -822,16 +888,22 @@ internal fun SongItem(
     onClick: () -> Unit,
     onFavoriteClick: () -> Unit,
     onAddToLibraryClick: () -> Unit,
-    onRemoveFromLibraryClick: (() -> Unit)? = null
+    onRemoveFromLibraryClick: (() -> Unit)? = null,
+    scrollState: LazyListState? = null
 ) {
     var listActionsExpanded by remember { mutableStateOf(false) }
+    val durationLabel = remember(song.duration) { formatDuration(song.duration) }
+    val artistLabel = remember(song.artist) {
+        song.artist.ifBlank { "Artista desconocido" }
+    }
+    val rowShape = remember { RoundedCornerShape(14.dp) }
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
+        shape = rowShape,
         color = if (isCurrent) {
             // El estado activo se reconoce sin convertir la fila en un bloque rojo.
             MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
@@ -843,7 +915,12 @@ internal fun SongItem(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            SongArtwork(song = song, size = 82.dp, cornerRadius = 10.dp)
+            SongArtwork(
+                song = song,
+                size = 82.dp,
+                cornerRadius = 10.dp,
+                scrollState = scrollState
+            )
 
             Spacer(modifier = Modifier.width(14.dp))
 
@@ -858,7 +935,7 @@ internal fun SongItem(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = song.artist.ifBlank { "Artista desconocido" },
+                    text = artistLabel,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -882,7 +959,7 @@ internal fun SongItem(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = formatDuration(song.duration),
+                    text = durationLabel,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1120,5 +1197,10 @@ private fun formatDuration(durationMs: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
 
-    return "%d:%02d".format(minutes, seconds)
+    return buildString(8) {
+        append(minutes)
+        append(':')
+        if (seconds < 10) append('0')
+        append(seconds)
+    }
 }
