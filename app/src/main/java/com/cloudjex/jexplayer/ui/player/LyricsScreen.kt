@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,25 +25,21 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
-import com.cloudjex.jexplayer.data.lyrics.LineaCancion
 import com.cloudjex.jexplayer.data.lyrics.LyricsDocument
 import com.cloudjex.jexplayer.data.lyrics.LyricsLoadState
 import com.cloudjex.jexplayer.data.lyrics.LyricsSource
@@ -61,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -91,6 +89,17 @@ fun LyricsScreen(
     val tamanoTraduccion = (settings.fontSizeSp * 0.78f)
         .coerceAtLeast(11f)
         .sp
+    // El lienzo del karaoke debe partir del mismo estilo que el Text normal
+    // para que el ancho, el interletrado y la altura de línea coincidan.
+    val estiloKaraoke = LocalTextStyle.current.merge(
+        TextStyle(
+            fontWeight = FontWeight.Black,
+            fontFamily = familiaLetra,
+            fontSize = tamanoLetra,
+            fontStyle = estiloLetra,
+            textAlign = TextAlign.Center
+        )
+    )
     val soporteTraduccion = lyricsDocument?.translationSupport
         ?: LyricsTranslationSupport.UNAVAILABLE_PATTERN
     val viewModel: MusicViewModel = viewModel()
@@ -204,23 +213,6 @@ fun LyricsScreen(
                             label = "ColorAnimation"
                         )
 
-                        val finLineaMs = linealetra.finMs
-                            ?: listaSincronizada.getOrNull(indice + 1)?.tiempo
-                            ?: (linealetra.tiempo + 8_000L)
-                        val texto = if (
-                            esLaSeleccionada && linealetra.segmentos.isNotEmpty()
-                        ) {
-                            textoKaraoke(
-                                linea = linealetra,
-                                posicionMs = posicionActual.value,
-                                finLineaMs = finLineaMs,
-                                colorCantado = colorActivo,
-                                colorPendiente = colorPendiente
-                            )
-                        } else {
-                            AnnotatedString(linealetra.texto)
-                        }
-
                         val traduccion = linealetra.traduccion
                             ?.takeIf { settings.showTranslation }
 
@@ -238,16 +230,32 @@ fun LyricsScreen(
                                     lineaSeleccionada = indice
                                 }
                         ) {
-                            Text(
-                                text = texto,
-                                textAlign = TextAlign.Center,
-                                fontWeight = FontWeight.Black,
-                                fontFamily = familiaLetra,
-                                fontSize = tamanoLetra,
-                                fontStyle = estiloLetra,
-                                color = colorAnimado,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                            if (
+                                esLaSeleccionada &&
+                                linealetra.segmentos.isNotEmpty()
+                            ) {
+                                KaraokeSweepText(
+                                    linea = linealetra,
+                                    siguienteLineaMs = listaSincronizada
+                                        .getOrNull(indice + 1)?.tiempo,
+                                    posicionMs = posicionActual,
+                                    estilo = estiloKaraoke,
+                                    colorCantado = colorActivo,
+                                    colorPendiente = colorPendiente,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            } else {
+                                Text(
+                                    text = AnnotatedString(linealetra.texto),
+                                    textAlign = TextAlign.Center,
+                                    fontWeight = FontWeight.Black,
+                                    fontFamily = familiaLetra,
+                                    fontSize = tamanoLetra,
+                                    fontStyle = estiloLetra,
+                                    color = colorAnimado,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                             if (traduccion != null) {
                                 Text(
                                     text = traduccion,
@@ -330,60 +338,86 @@ fun LyricsScreen(
     }
 }
 
+/**
+ * Reloj suave del karaoke.
+ *
+ * Lee la posición real del reproductor cada [INTERVALO_LECTURA_POSICION_MS] y
+ * avanza con [withFrameNanos] entre lecturas, para que el barrido corra a la
+ * frecuencia de la pantalla sin consultar el controlador en cada frame.
+ *
+ * Un seek o un salto grande se reancla de inmediato; una diferencia pequeña se
+ * corrige poco a poco para no hacer saltar la letra. En pausa no se avanza y la
+ * posición vuelve a la del reproductor.
+ */
 @Composable
 private fun posicionKaraoke(): State<Long> {
     val viewModel: MusicViewModel = viewModel()
-    return produceState(initialValue = viewModel.currentPlaybackPositionMs()) {
-        var ultimaPosicion = value
+    val posicion = remember {
+        mutableLongStateOf(viewModel.currentPlaybackPositionMs())
+    }
+
+    LaunchedEffect(viewModel) {
+        var anclaMs = viewModel.currentPlaybackPositionMs()
+        var anclaFrameMs = 0L
+        var ultimoFrameMs = 0L
+        var ultimaLecturaMs = 0L
+
+        posicion.longValue = anclaMs
+
         while (true) {
-            val posicion = viewModel.currentPlaybackPositionMs()
-            val retroceso = ultimaPosicion - posicion
-            if (
-                posicion >= ultimaPosicion ||
-                !viewModel.isPlaying.value ||
-                retroceso > RETROCESO_TOLERADO_MS
-            ) {
-                ultimaPosicion = posicion
+            if (!viewModel.isPlaying.value) {
+                val real = viewModel.currentPlaybackPositionMs()
+                anclaMs = real
+                anclaFrameMs = 0L
+                ultimoFrameMs = 0L
+                ultimaLecturaMs = 0L
+                if (posicion.longValue != real) posicion.longValue = real
+                delay(INTERVALO_LECTURA_POSICION_MS)
+                continue
             }
-            value = ultimaPosicion
-            delay(50)
+
+            val frameNs = withFrameNanos { it }
+            val frameMs = frameNs / 1_000_000L
+
+            // Tras volver del segundo plano o de un parón largo, los frames
+            // llegan con un salto enorme: conviene reanclar antes de pintar.
+            val saltoDeFrame = ultimoFrameMs != 0L &&
+                frameMs - ultimoFrameMs > SALTO_DE_FRAME_MS
+            ultimoFrameMs = frameMs
+
+            if (anclaFrameMs == 0L || saltoDeFrame) {
+                anclaMs = viewModel.currentPlaybackPositionMs()
+                anclaFrameMs = frameMs
+                ultimaLecturaMs = frameMs
+            } else if (
+                frameMs - ultimaLecturaMs >= INTERVALO_LECTURA_POSICION_MS
+            ) {
+                val real = viewModel.currentPlaybackPositionMs()
+                val pronosticada = anclaMs + (frameMs - anclaFrameMs)
+                val deriva = real - pronosticada
+
+                if (abs(deriva) >= REANCLAJE_MS) {
+                    anclaMs = real
+                } else {
+                    anclaMs = pronosticada +
+                        (deriva * CORRECCION_DERIVA).toLong()
+                }
+                anclaFrameMs = frameMs
+                ultimaLecturaMs = frameMs
+            }
+
+            val calculada = (anclaMs + (frameMs - anclaFrameMs))
+                .coerceAtLeast(0L)
+            if (posicion.longValue != calculada) {
+                posicion.longValue = calculada
+            }
         }
     }
+
+    return posicion
 }
 
-private const val RETROCESO_TOLERADO_MS = 300L
-
-/**
- * Construye la línea activa con un degradado que avanza con los tiempos de
- * cada palabra o sílaba. Las palabras ya cantadas usan el color activo y las
- * pendientes el color de espera de la paleta elegida.
- */
-private fun textoKaraoke(
-    linea: LineaCancion,
-    posicionMs: Long,
-    finLineaMs: Long,
-    colorCantado: Color,
-    colorPendiente: Color
-): AnnotatedString = buildAnnotatedString {
-    linea.segmentos.forEachIndexed { indice, segmento ->
-        val finSegmento = linea.segmentos.getOrNull(indice + 1)?.tiempo ?: finLineaMs
-        val transicionMs = (finSegmento - segmento.tiempo).coerceIn(1L, 500L)
-        val transcurrido = posicionMs - segmento.tiempo
-
-        val color = when {
-            transcurrido < 0L -> colorPendiente
-            transcurrido >= transicionMs -> colorCantado
-            else -> lerp(
-                colorPendiente,
-                colorCantado,
-                (transcurrido.toFloat() / transicionMs).coerceIn(0f, 1f)
-            )
-        }
-
-        withStyle(SpanStyle(color = color)) {
-            append(segmento.texto)
-        }
-    }
-}
-
-// Los parsers viven en data/lyrics para poder probarlos como lógica pura.
+private const val INTERVALO_LECTURA_POSICION_MS = 220L
+private const val REANCLAJE_MS = 750L
+private const val CORRECCION_DERIVA = 0.25f
+private const val SALTO_DE_FRAME_MS = 1_000L
