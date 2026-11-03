@@ -18,6 +18,11 @@ android {
         create("benchmark") {
             // El APK de test se ejecuta con el build type "benchmark" de :app.
             matchingFallbacks += listOf("release")
+            // Sin esta firma el APK de test queda sin certificado y el
+            // dispositivo lo rechaza con INSTALL_PARSE_FAILED_NO_CERTIFICATES.
+            // Se usa la misma clave de depuracion que :app para que ambos APK
+            // compartan identidad y se puedan instalar en paralelo.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

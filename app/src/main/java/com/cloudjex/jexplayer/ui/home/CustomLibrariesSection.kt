@@ -299,6 +299,7 @@ fun CustomLibraryDetail(
             }
         } else {
             val listState = rememberLazyListState()
+            val scrollIdle = rememberScrollIdleSignal(listState)
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
@@ -327,7 +328,7 @@ fun CustomLibraryDetail(
                         onRemoveFromLibraryClick = {
                             viewModel.removeSongFromCustomLibrary(library.id, song.id)
                         },
-                        scrollState = listState
+                        scrollIdle = scrollIdle
                     )
                 }
             }
