@@ -43,6 +43,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -75,8 +76,11 @@ import com.cloudjex.jexplayer.viewmodel.PlaybackContext
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
 import com.cloudjex.jexplayer.ui.navigation.JexBottomBar
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.shareIn
 
 @Composable
 fun HomeScreen(
@@ -91,12 +95,6 @@ fun HomeScreen(
 ) {
     val songs by viewModel.songs.collectAsState()
     val favoriteIds by viewModel.favoriteIds.collectAsState()
-    androidx.compose.runtime.LaunchedEffect(favoriteIds) {
-        android.util.Log.d(
-            "JexFavorites",
-            "Stored favorites: ${favoriteIds.size} - $favoriteIds"
-        )
-    }
     val folders by viewModel.folders.collectAsState()
     val revokedFolderUris by viewModel.revokedFolderUris.collectAsState()
     val folderMessage by viewModel.folderMessage.collectAsState()
@@ -417,6 +415,7 @@ private fun FavoritesPlaylist(
             )
         } else {
             val listState = rememberLazyListState()
+            val scrollIdle = rememberScrollIdleSignal(listState)
             LazyColumn(
                 state = listState,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -442,7 +441,7 @@ private fun FavoritesPlaylist(
                         onAddToLibraryClick = {
                             onAddToLibrary(song)
                         },
-                        scrollState = listState
+                        scrollIdle = scrollIdle
                     )
                 }
             }
@@ -465,6 +464,10 @@ private fun LibrarySongList(
     var observedSongId by remember { mutableStateOf(currentSongId) }
     var hasObservedSong by remember { mutableStateOf(false) }
     var localFollowId by remember { mutableStateOf<String?>(null) }
+
+    // Una sola señal de scroll para toda la lista: las filas no registran
+    // observadores propios del estado de scroll.
+    val scrollIdle = rememberScrollIdleSignal(listState)
 
     // Solo una nueva identidad de canción genera una solicitud. Los cambios de
     // progreso, reproducción y visualizador no pasan por este efecto.
@@ -520,7 +523,7 @@ private fun LibrarySongList(
                 onClick = { viewModel.playSong(song, PlaybackContext.Library, filteredSongs) },
                 onFavoriteClick = { viewModel.toggleFavorite(song.id) },
                 onAddToLibraryClick = { onAddToLibrary(song) },
-                scrollState = listState
+                scrollIdle = scrollIdle
             )
         }
     }
@@ -798,12 +801,37 @@ private fun FoldersFilterRow(
     }
 }
 
+/**
+ * Señal compartida de "la lista está en reposo" para todas las filas.
+ *
+ * Antes cada fila observaba `isScrollInProgress` con su propio `snapshotFlow`.
+ * Como `snapshotFlow` sin un `SnapshotFlowManager` compartido crea uno por
+ * llamada, la biblioteca llegó a registrar un observador de snapshot por fila
+ * visible: durante un fling las filas entran y salen constantemente y cada una
+ * registraba y deregistraba su observador en el hilo principal.
+ *
+ * Aquí el `snapshotFlow` se crea una sola vez por lista y se comparte con
+ * `shareIn`, de modo que el flujo ascendente se recoge una única vez y hay un
+ * solo observador. Las filas reciben el valor por un Flow y lo leen dentro de
+ * su propia corrutina, no durante la composición, así que iniciar o terminar
+ * un gesto sigue sin recomponer las filas.
+ */
+@Composable
+internal fun rememberScrollIdleSignal(listState: LazyListState): Flow<Boolean> {
+    val scope = rememberCoroutineScope()
+    return remember(listState, scope) {
+        snapshotFlow { listState.isScrollInProgress }
+            .distinctUntilChanged()
+            .shareIn(scope, SharingStarted.WhileSubscribed(), replay = 1)
+    }
+}
+
 @Composable
 internal fun SongArtwork(
     song: Song,
     size: Dp,
     cornerRadius: Dp,
-    scrollState: LazyListState? = null
+    scrollIdle: Flow<Boolean>? = null
 ) {
     val placeholderColor = MaterialTheme.colorScheme.secondaryContainer
     val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
@@ -839,7 +867,7 @@ internal fun SongArtwork(
         mutableStateOf(cacheKey?.let(repository::peek))
     }
 
-    LaunchedEffect(cacheKey, imageRequest, scrollState) {
+    LaunchedEffect(cacheKey, imageRequest, scrollIdle) {
         val key = cacheKey ?: return@LaunchedEffect
         val request = imageRequest ?: return@LaunchedEffect
         if (image != null) return@LaunchedEffect
@@ -850,16 +878,15 @@ internal fun SongArtwork(
             }
         }
 
-        if (scrollState == null) {
+        val idle = scrollIdle
+        if (idle == null) {
             loadWhenIdle()
         } else {
-            // Se observa el estado del scroll desde la corrutina, no desde la
-            // composición: empezar o terminar un gesto ya no recompone las filas.
-            snapshotFlow { scrollState.isScrollInProgress }
-                .distinctUntilChanged()
-                .collectLatest { scrolling ->
-                    if (!scrolling) loadWhenIdle()
-                }
+            // La señal se observa desde la corrutina, no desde la composición:
+            // empezar o terminar un gesto ya no recompone las filas.
+            idle.collectLatest { scrolling ->
+                if (!scrolling) loadWhenIdle()
+            }
         }
     }
 
@@ -889,7 +916,7 @@ internal fun SongItem(
     onFavoriteClick: () -> Unit,
     onAddToLibraryClick: () -> Unit,
     onRemoveFromLibraryClick: (() -> Unit)? = null,
-    scrollState: LazyListState? = null
+    scrollIdle: Flow<Boolean>? = null
 ) {
     var listActionsExpanded by remember { mutableStateOf(false) }
     val durationLabel = remember(song.duration) { formatDuration(song.duration) }
@@ -919,7 +946,7 @@ internal fun SongItem(
                 song = song,
                 size = 82.dp,
                 cornerRadius = 10.dp,
-                scrollState = scrollState
+                scrollIdle = scrollIdle
             )
 
             Spacer(modifier = Modifier.width(14.dp))
