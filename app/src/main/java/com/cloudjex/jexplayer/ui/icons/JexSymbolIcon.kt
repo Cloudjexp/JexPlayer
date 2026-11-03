@@ -13,6 +13,7 @@ import com.cloudjex.jexplayer.R
 enum class JexSymbol(@param:DrawableRes val resourceId: Int) {
     ArrowBack(R.drawable.ms_arrow_back),
     Close(R.drawable.ms_close),
+    Download(R.drawable.ms_download),
     Favorite(R.drawable.ms_favorite),
     Filter(R.drawable.ms_filter_list),
     Folder(R.drawable.ms_folder),

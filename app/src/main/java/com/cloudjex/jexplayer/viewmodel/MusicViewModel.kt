@@ -2,11 +2,15 @@ package com.cloudjex.jexplayer.viewmodel
 
 import android.app.Application
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.DocumentsContract
+import android.provider.Settings
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.C
@@ -56,24 +60,35 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import com.cloudjex.jexplayer.data.local.FavoritesStore
 import com.cloudjex.jexplayer.data.update.CheckResult
 import com.cloudjex.jexplayer.data.update.GithubReleaseClient
-import com.cloudjex.jexplayer.data.update.GithubRelease
+import com.cloudjex.jexplayer.data.update.InAppUpdateState
 import com.cloudjex.jexplayer.data.update.UpdateChecker
+import com.cloudjex.jexplayer.data.update.copyWithProgress
 import com.cloudjex.jexplayer.data.update.updateCheckStore
 import com.cloudjex.jexplayer.BuildConfig
+
+private const val UPDATE_APK_NAME = "JexPlayer-update.apk"
+private const val PROGRESS_STEP_BYTES = 256L * 1024
+private const val MAX_REDIRECTS = 5
 
 
 
@@ -115,6 +130,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val lastSongStore = LastSongStore(appContext)
     private val restoredLastSong = lastSongStore.load()
     private var scanJob: Job? = null
+    private var downloadJob: Job? = null
+    private var downloadConnection: HttpURLConnection? = null
+    private var downloadApkFile: File? = null
     private var userChangedScreen = false
     private var audioTagsJob: Job? = null
     @Volatile
@@ -235,8 +253,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _folderMessage = MutableStateFlow<String?>(null)
     val folderMessage: StateFlow<String?> = _folderMessage.asStateFlow()
 
-    private val _availableUpdate = MutableStateFlow<GithubRelease?>(null)
-    val availableUpdate: StateFlow<GithubRelease?> = _availableUpdate.asStateFlow()
+    private val _inAppUpdate = MutableStateFlow<InAppUpdateState>(InAppUpdateState.Idle)
+    val inAppUpdate: StateFlow<InAppUpdateState> = _inAppUpdate.asStateFlow()
     private val _isCheckingUpdates = MutableStateFlow(false)
     val isCheckingUpdates: StateFlow<Boolean> = _isCheckingUpdates.asStateFlow()
     private val _updateMessage = MutableStateFlow<String?>(null)
@@ -417,8 +435,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 is CheckResult.Success -> {
                     if (result.update == null) {
                         if (manual) _updateMessage.value = "Ya tienes la última versión."
-                    } else if (manual || !result.wasDismissed) {
-                        _availableUpdate.value = result.update
+                    } else if ((manual || !result.wasDismissed) &&
+                        _inAppUpdate.value !is InAppUpdateState.Downloading
+                    ) {
+                        val update = result.update
+                        _inAppUpdate.value = InAppUpdateState.Available(
+                            currentVersion = BuildConfig.VERSION_NAME,
+                            newVersion = update.version,
+                            changelog = update.notes,
+                            downloadUrl = update.apkUrl ?: update.htmlUrl
+                        )
                         if (manual) _updateMessage.value = "Hay una actualización disponible."
                     }
                 }
@@ -428,9 +454,141 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissUpdate() {
-        val version = _availableUpdate.value?.version ?: return
-        _availableUpdate.value = null
+        val version = (_inAppUpdate.value as? InAppUpdateState.Available)?.newVersion ?: return
+        _inAppUpdate.value = InAppUpdateState.Idle
         viewModelScope.launch { updateChecker.dismiss(version) }
+    }
+
+    /** Cierra el diálogo sin perseguir la versión: vuelve en la próxima comprobación. */
+    fun hideUpdate() {
+        if (_inAppUpdate.value is InAppUpdateState.Downloading) return
+        _inAppUpdate.value = InAppUpdateState.Idle
+    }
+
+    fun startInAppDownload(context: Context, downloadUrl: String) {
+        val available = _inAppUpdate.value as? InAppUpdateState.Available ?: return
+        if (downloadJob?.isActive == true) return
+        if (!available.isApk) {
+            runCatching {
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+            _inAppUpdate.value = InAppUpdateState.Idle
+            return
+        }
+        val apkFile = File(context.cacheDir, UPDATE_APK_NAME)
+        downloadApkFile = apkFile
+        downloadJob = viewModelScope.launch(Dispatchers.IO) {
+            _inAppUpdate.value = InAppUpdateState.Downloading(0L, 0L, 0f)
+            try {
+                apkFile.delete()
+                val connection = openDownloadConnection(downloadUrl)
+                val totalBytes = connection.contentLengthLong.coerceAtLeast(0L)
+                var lastReported = 0L
+                connection.inputStream.use { input ->
+                    FileOutputStream(apkFile).use { output ->
+                        copyWithProgress(input, output, totalBytes) { downloaded, total ->
+                            ensureActive()
+                            if (downloaded - lastReported >= PROGRESS_STEP_BYTES || downloaded == total) {
+                                lastReported = downloaded
+                                _inAppUpdate.value = InAppUpdateState.Downloading(
+                                    downloadedBytes = downloaded,
+                                    totalBytes = total,
+                                    progress = if (total > 0) downloaded.toFloat() / total else 0f
+                                )
+                            }
+                        }
+                    }
+                }
+                _inAppUpdate.value = InAppUpdateState.Idle
+                installApk(context, apkFile, available)
+            } catch (cancelled: CancellationException) {
+                apkFile.delete()
+                throw cancelled
+            } catch (_: Exception) {
+                apkFile.delete()
+                // Si la cancelación interrumpió la lectura, no reabrimos el diálogo.
+                if (isActive) {
+                    _inAppUpdate.value = available
+                    _updateMessage.value = "No se pudo descargar la actualización."
+                }
+            } finally {
+                downloadConnection = null
+                downloadJob = null
+            }
+        }
+    }
+
+    fun cancelInAppDownload() {
+        // Cancelar primero: así el catch de la descarga no reabre el diálogo con un error.
+        downloadJob?.cancel()
+        downloadJob = null
+        downloadConnection?.disconnect()
+        downloadConnection = null
+        val apkFile = downloadApkFile
+        downloadApkFile = null
+        _inAppUpdate.value = InAppUpdateState.Idle
+        if (apkFile != null) viewModelScope.launch(Dispatchers.IO) { apkFile.delete() }
+    }
+
+    /** Sigue redirecciones a mano: GitHub responde 302 hacia S3 y `HttpURLConnection` no las sigue entre hosts. */
+    private fun openDownloadConnection(url: String): HttpURLConnection {
+        var target = URL(url)
+        repeat(MAX_REDIRECTS) {
+            val connection = (target.openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false
+                connectTimeout = 15_000
+                readTimeout = 30_000
+                setRequestProperty("User-Agent", "JexPlayer")
+            }
+            downloadConnection = connection
+            val code = connection.responseCode
+            if (code in 300..399) {
+                val location = connection.getHeaderField("Location")
+                connection.disconnect()
+                if (location == null) error("Redirección sin Location")
+                target = URL(target, location)
+            } else {
+                if (code !in 200..299) error("HTTP $code")
+                return connection
+            }
+        }
+        error("Demasiadas redirecciones")
+    }
+
+    private fun installApk(
+        context: Context,
+        apkFile: File,
+        available: InAppUpdateState.Available
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !context.packageManager.canRequestPackageInstalls()
+        ) {
+            // shortcut: tras conceder el permiso hay que volver a descargar; reutilizar
+            // el APK ya bajado cuando el re-descargar moleste en la práctica.
+            _inAppUpdate.value = available
+            _updateMessage.value =
+                "Activa la instalación de apps desconocidas y vuelve a descargar."
+            runCatching {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:${context.packageName}")
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+            return
+        }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (runCatching { context.startActivity(intent) }.isFailure) {
+            _inAppUpdate.value = available
+            _updateMessage.value = "No se encontró un instalador de paquetes."
+        }
     }
 
     /**
