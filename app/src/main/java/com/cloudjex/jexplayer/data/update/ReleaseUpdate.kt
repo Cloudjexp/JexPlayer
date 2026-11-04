@@ -4,7 +4,9 @@ data class GithubRelease(
     val version: String,
     val notes: String,
     val htmlUrl: String,
-    val isPreRelease: Boolean
+    val isPreRelease: Boolean,
+    /** URL directa del APK publicado en la release; `null` si no adjuntaron assets. */
+    val apkUrl: String? = null
 )
 
 /** SemVer suficiente para las versiones que publica JexPlayer. */

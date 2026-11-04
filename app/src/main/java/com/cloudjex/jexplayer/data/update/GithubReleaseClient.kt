@@ -30,7 +30,19 @@ class GithubReleaseClient(
                 if (release["draft"] == true) return@mapNotNull null
                 val tag = release["tag_name"] as? String ?: return@mapNotNull null
                 val url = release["html_url"] as? String ?: return@mapNotNull null
-                GithubRelease(tag, release["body"] as? String ?: "", url, release["prerelease"] == true)
+                val apkUrl = (release["assets"] as? List<*>).orEmpty()
+                    .mapNotNull { it as? Map<*, *> }
+                    .firstOrNull {
+                        (it["name"] as? String)?.endsWith(".apk", ignoreCase = true) == true
+                    }
+                    ?.get("browser_download_url") as? String
+                GithubRelease(
+                    tag,
+                    release["body"] as? String ?: "",
+                    url,
+                    release["prerelease"] == true,
+                    apkUrl
+                )
             }
         } finally {
             connection.disconnect()
