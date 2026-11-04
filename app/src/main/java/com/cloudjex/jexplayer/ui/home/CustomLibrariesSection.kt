@@ -1,9 +1,12 @@
 package com.cloudjex.jexplayer.ui.home
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,14 +23,15 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,11 +43,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
 import com.cloudjex.jexplayer.data.model.CustomLibrary
 import com.cloudjex.jexplayer.data.model.CustomLibraryNameError
 import com.cloudjex.jexplayer.data.model.Song
@@ -89,9 +95,13 @@ fun CustomLibrariesOverview(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
                 )
-                Button(
+                OutlinedButton(
                     onClick = { showCreateDialog = true },
-                    enabled = customLibrariesReady
+                    enabled = customLibrariesReady,
+                    border = BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                    )
                 ) {
                     Text("Crear lista")
                 }
@@ -104,10 +114,11 @@ fun CustomLibrariesOverview(
 
         item {
             Text(
-                text = "Bibliotecas personalizadas",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary
+                text = "Bibliotecas personalizadas".uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                letterSpacing = 1.2.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp)
             )
         }
 
@@ -141,9 +152,13 @@ fun CustomLibrariesOverview(
             else -> items(customLibraries, key = { it.id }) { library ->
                 val availableCount = library.songIds.count { it in songsById }
                 val unavailableCount = library.songIds.size - availableCount
+                val previewSongs = remember(library.songIds, songsById) {
+                    library.songIds.asSequence().mapNotNull(songsById::get).take(4).toList()
+                }
 
                 CustomLibraryCard(
                     library = library,
+                    previewSongs = previewSongs,
                     availableCount = availableCount,
                     unavailableCount = unavailableCount,
                     canPlay = availableCount > 0,
@@ -499,34 +514,27 @@ private fun FavoritesCard(
     count: Int,
     onClick: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer
-    ) {
+    PlaylistCard {
         Row(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            JexSymbolIcon(
-                symbol = JexSymbol.Favorite,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(32.dp)
-            )
+            PlaylistCover(songs = emptyList(), fallback = JexSymbol.Favorite)
 
-            Spacer(Modifier.width(16.dp))
+            Spacer(Modifier.width(12.dp))
 
             Column {
                 Text(
                     text = "Favoritos",
-                    style = MaterialTheme.typography.titleLarge
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     text = songCountText(count),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -534,9 +542,69 @@ private fun FavoritesCard(
     }
 }
 
+/** Contenedor común de las listas: borde ultrafino y fondo casi imperceptible. */
+@Composable
+private fun PlaylistCard(content: @Composable ColumnScope.() -> Unit) {
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+        ),
+        content = content
+    )
+}
+
+/**
+ * Portada de lista: mosaico 2x2 con las cuatro primeras canciones, la portada
+ * disponible cuando hay menos, o el ícono indicado si la lista está vacía.
+ */
+@Composable
+private fun PlaylistCover(
+    songs: List<Song>,
+    fallback: JexSymbol,
+    size: Dp = 56.dp
+) {
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            songs.isEmpty() -> JexSymbolIcon(
+                symbol = fallback,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(22.dp)
+            )
+
+            songs.size >= 4 -> {
+                val tile = size / 2
+                Column(Modifier.fillMaxSize()) {
+                    Row(Modifier.weight(1f)) {
+                        SongArtwork(songs[0], tile, 0.dp)
+                        SongArtwork(songs[1], tile, 0.dp)
+                    }
+                    Row(Modifier.weight(1f)) {
+                        SongArtwork(songs[2], tile, 0.dp)
+                        SongArtwork(songs[3], tile, 0.dp)
+                    }
+                }
+            }
+
+            // De 1 a 3 portadas: la primera ocupa el cuadrado completo.
+            else -> SongArtwork(songs[0], size, 0.dp)
+        }
+    }
+}
+
 @Composable
 private fun CustomLibraryCard(
     library: CustomLibrary,
+    previewSongs: List<Song>,
     availableCount: Int,
     unavailableCount: Int,
     canPlay: Boolean,
@@ -547,24 +615,15 @@ private fun CustomLibraryCard(
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer
-    ) {
+    PlaylistCard {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onOpen)
-                .padding(start = 16.dp, top = 12.dp, end = 4.dp, bottom = 12.dp),
+                .padding(start = 10.dp, top = 8.dp, end = 4.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            JexSymbolIcon(
-                symbol = JexSymbol.QueueMusic,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(26.dp)
-            )
+            PlaylistCover(songs = previewSongs, fallback = JexSymbol.QueueMusic)
 
             Spacer(Modifier.width(12.dp))
 

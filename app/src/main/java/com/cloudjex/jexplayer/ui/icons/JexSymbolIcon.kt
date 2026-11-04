@@ -23,6 +23,7 @@ enum class JexSymbol(@param:DrawableRes val resourceId: Int) {
     Pause(R.drawable.ms_pause),
     PlayArrow(R.drawable.ms_play_arrow),
     QueueMusic(R.drawable.ms_queue_music),
+    Refresh(R.drawable.ms_refresh),
     Repeat(R.drawable.ms_repeat),
     RepeatOne(R.drawable.ms_repeat_one),
     Search(R.drawable.ms_search),

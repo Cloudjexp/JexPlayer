@@ -4,7 +4,7 @@ Android local music player: SAF folder picker -> recursive scan -> Media3/ExoPla
 
 ## Build / stack
 - Kotlin 2.2.10, AGP 9.4.1, Gradle 9.6.0, Compose BOM 2026.02.01, media3 1.11.1, DataStore Preferences 1.2.1, Coil 3.3.0, jAudioTagger 3.0.1.
-- `namespace` / `applicationId`: `com.cloudjex.jexplayer`; version `0.1.0-beta.3`. `compileSdk` / `targetSdk = 37` (AGP 9 DSL: `compileSdk { version = release(37) }`), `minSdk = 24`, Java 11.
+- `namespace` / `applicationId`: `com.cloudjex.jexplayer`; version `0.1.0-beta.4`. `compileSdk` / `targetSdk = 37` (AGP 9 DSL: `compileSdk { version = release(37) }`), `minSdk = 24`, Java 11.
 - `:app` build types: `debug`, `release`, and `benchmark` (release-like, debug-signed, consumed by `:benchmark`). Not product flavors.
 - Versions live in `gradle/libs.versions.toml`; add dependencies there, not inline in `app/build.gradle.kts`.
 - Repos are locked to `google()` + `mavenCentral()` with `FAIL_ON_PROJECT_REPOS` (`settings.gradle.kts`). Configuration cache is on.

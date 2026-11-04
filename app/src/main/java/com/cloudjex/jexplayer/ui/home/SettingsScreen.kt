@@ -1,31 +1,38 @@
 package com.cloudjex.jexplayer.ui.home
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,16 +42,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.cloudjex.jexplayer.data.model.AppearanceTheme
+import androidx.compose.ui.unit.sp
 import com.cloudjex.jexplayer.data.model.AppearanceAccent
+import com.cloudjex.jexplayer.data.model.AppearanceTheme
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
@@ -122,17 +131,16 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(Modifier.height(18.dp))
-        SettingsSectionTitle("Biblioteca")
+        Spacer(Modifier.height(20.dp))
+        SettingsLabel("Biblioteca", Modifier.padding(start = 4.dp, bottom = 8.dp))
         SettingsCard {
-            Text(
-                "Carpetas seleccionadas",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(Modifier.height(8.dp))
             if (folders.isEmpty()) {
-                Text("No hay carpetas configuradas.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "No hay carpetas configuradas.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                )
             } else {
                 folders.forEach { folder ->
                     FolderSettingRow(
@@ -142,19 +150,23 @@ fun SettingsScreen(
                     )
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = onAddFolder, modifier = Modifier.fillMaxWidth()) {
-                Text("Agregar carpeta musical")
-            }
-            OutlinedButton(
+            SettingsActionRow(
+                title = "Agregar carpeta musical",
+                symbol = JexSymbol.LibraryMusic,
+                onClick = onAddFolder
+            )
+            SettingsActionRow(
+                title = if (isScanning) "Escaneando…" else "Actualizar biblioteca",
+                symbol = JexSymbol.Refresh,
                 onClick = { viewModel.refreshLibrary() },
-                enabled = !isScanning,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(if (isScanning) "Escaneando…" else "Actualizar biblioteca")
-            }
+                enabled = !isScanning
+            )
             if (isScanning) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
+                )
             }
             message?.let {
                 Text(
@@ -162,67 +174,96 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = if (revokedFolders.isNotEmpty()) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 8.dp)
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp)
                 )
             }
         }
 
-        Spacer(Modifier.height(18.dp))
-        SettingsSectionTitle("Apariencia")
+        Spacer(Modifier.height(20.dp))
+        SettingsLabel("Apariencia", Modifier.padding(start = 4.dp, bottom = 8.dp))
         SettingsCard {
             Text(
                 "Elige una paleta oscura. El cambio se aplica al instante.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 12.dp)
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
-            AppearanceTheme.entries.forEach { theme ->
-                AppearanceThemeOption(
-                    theme = theme,
-                    selected = selectedTheme == theme,
-                    onSelect = { viewModel.setAppearanceTheme(theme) }
-                )
-                if (theme == AppearanceTheme.DARK && selectedTheme == AppearanceTheme.DARK) {
-                    DarkAccentSelector(
-                        selectedAccent = selectedAccent,
-                        onAccentSelected = viewModel::setAppearanceAccent
+            FlowRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AppearanceTheme.entries.forEach { theme ->
+                    FilterChip(
+                        selected = selectedTheme == theme,
+                        onClick = { viewModel.setAppearanceTheme(theme) },
+                        label = { Text(theme.label) }
                     )
                 }
             }
+            // El acento solo afecta a la paleta Midnight.
+            if (selectedTheme == AppearanceTheme.DARK) {
+                Spacer(Modifier.height(16.dp))
+                SettingsLabel("Color de acento", Modifier.padding(horizontal = 16.dp))
+                Spacer(Modifier.height(4.dp))
+                AccentRow(
+                    selectedAccent = selectedAccent,
+                    onAccentSelected = viewModel::setAppearanceAccent
+                )
+            }
+            Spacer(Modifier.height(12.dp))
         }
 
-        Spacer(Modifier.height(18.dp))
-        SettingsSectionTitle("Reproducción")
+        Spacer(Modifier.height(20.dp))
+        SettingsLabel("Reproducción", Modifier.padding(start = 4.dp, bottom = 8.dp))
         SettingsCard {
-            Text("Controles de reproducción", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Aleatorio, repetición y progreso se controlan desde el reproductor.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-        }
-
-        Spacer(Modifier.height(18.dp))
-        SettingsSectionTitle("Acerca de JexPlayer")
-        SettingsCard {
-            Text("JexPlayer", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            if (!versionName.isNullOrBlank()) {
-                Text("Versión $versionName", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            OutlinedButton(
-                onClick = { viewModel.checkForUpdates() },
-                enabled = !isCheckingUpdates,
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
-            ) {
-                Text(if (isCheckingUpdates) "Comprobando…" else "Buscar actualizaciones")
-            }
-            updateMessage?.let { message ->
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                 Text(
-                    message,
+                    "Controles de reproducción",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Aleatorio, repetición y progreso se controlan desde el reproductor.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        SettingsLabel("Acerca de JexPlayer", Modifier.padding(start = 4.dp, bottom = 8.dp))
+        SettingsCard {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text(
+                    "JexPlayer",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                if (!versionName.isNullOrBlank()) {
+                    Text(
+                        "Versión $versionName",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+            SettingsActionRow(
+                title = if (isCheckingUpdates) "Comprobando actualizaciones…" else "Buscar actualizaciones",
+                symbol = JexSymbol.Download,
+                onClick = { viewModel.checkForUpdates() },
+                enabled = !isCheckingUpdates
+            )
+            updateMessage?.let { text ->
+                Text(
+                    text,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp)
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp)
                 )
             }
         }
@@ -231,30 +272,37 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun DarkAccentSelector(
+private fun AccentRow(
     selectedAccent: AppearanceAccent,
     onAccentSelected: (AppearanceAccent) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Box(modifier = Modifier.fillMaxWidth()) {
-        TextButton(
-            onClick = { expanded = true },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Color de acento: ${selectedAccent.label}")
-        }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            AppearanceAccent.entries.forEach { accent ->
-                DropdownMenuItem(
-                    text = { Text(accent.label) },
-                    onClick = {
-                        onAccentSelected(accent)
-                        expanded = false
-                    }
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        items(AppearanceAccent.entries) { accent ->
+            val isSelected = accent == selectedAccent
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(44.dp)
+                    .selectable(
+                        selected = isSelected,
+                        role = Role.RadioButton,
+                        onClick = { onAccentSelected(accent) }
+                    )
+                    .semantics { contentDescription = accent.label }
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .background(paletteFor(AppearanceTheme.DARK, accent).primary, CircleShape)
+                        .border(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.outlineVariant,
+                            shape = CircleShape
+                        )
                 )
             }
         }
@@ -262,116 +310,90 @@ private fun DarkAccentSelector(
 }
 
 @Composable
-private fun SettingsSectionTitle(title: String) {
-    Column(modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary
-        )
-    }
+private fun SettingsLabel(title: String, modifier: Modifier = Modifier) {
+    Text(
+        text = title.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        letterSpacing = 1.2.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier
+    )
 }
 
 @Composable
 private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth()
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+        )
     ) {
-        Column(modifier = Modifier.padding(16.dp), content = content)
+        Column(modifier = Modifier.padding(vertical = 6.dp), content = content)
     }
 }
 
 @Composable
-private fun AppearanceThemeOption(
-    theme: AppearanceTheme,
-    selected: Boolean,
-    onSelect: () -> Unit
+private fun SettingsActionRow(
+    title: String,
+    symbol: JexSymbol,
+    onClick: () -> Unit,
+    enabled: Boolean = true
 ) {
-    val palette = paletteFor(theme)
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect),
-        shape = MaterialTheme.shapes.medium,
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surfaceContainerLow,
-        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                modifier = Modifier.size(24.dp),
-                shape = CircleShape,
-                color = if (theme == AppearanceTheme.DARK) Color.Black else palette.primary,
-                border = if (theme == AppearanceTheme.DARK) {
-                    BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                } else {
-                    null
-                },
-                content = {}
+    val contentColor = if (enabled) MaterialTheme.colorScheme.onSurface
+    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+    ListItem(
+        headlineContent = { Text(title, color = contentColor) },
+        leadingContent = {
+            JexSymbolIcon(
+                symbol = symbol,
+                contentDescription = null,
+                tint = if (enabled) MaterialTheme.colorScheme.primary else contentColor
             )
-            Text(
-                text = theme.label,
-                style = MaterialTheme.typography.titleSmall,
-                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 12.dp)
-            )
-            RadioButton(selected = selected, onClick = null)
-        }
-    }
+        },
+        modifier = Modifier.clickable(enabled = enabled, onClick = onClick),
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+    )
 }
 
 @Composable
 private fun FolderSettingRow(folder: MusicFolder, isRevoked: Boolean, onRemove: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Surface(
-            modifier = Modifier.size(40.dp),
-            shape = MaterialTheme.shapes.small,
-            color = if (isRevoked) MaterialTheme.colorScheme.errorContainer
-            else MaterialTheme.colorScheme.secondaryContainer
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                JexSymbolIcon(
-                    symbol = JexSymbol.Folder,
-                    contentDescription = null,
-                    tint = if (isRevoked) MaterialTheme.colorScheme.onErrorContainer
-                    else MaterialTheme.colorScheme.onSecondaryContainer,
-                    modifier = Modifier.size(21.dp)
-                )
-            }
-        }
-        Column(modifier = Modifier.weight(1f)) {
+    ListItem(
+        headlineContent = {
             Text(
                 folder.name,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 12.dp),
                 fontWeight = FontWeight.Medium
             )
-            if (isRevoked) {
+        },
+        supportingContent = if (isRevoked) {
+            {
                 Text(
                     "Permiso revocado",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(start = 12.dp)
+                    color = MaterialTheme.colorScheme.error
                 )
             }
-        }
-        TextButton(onClick = onRemove) { Text("Quitar") }
-    }
+        } else null,
+        leadingContent = {
+            JexSymbolIcon(
+                symbol = JexSymbol.Folder,
+                contentDescription = null,
+                tint = if (isRevoked) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        trailingContent = {
+            IconButton(onClick = onRemove) {
+                JexSymbolIcon(
+                    symbol = JexSymbol.Close,
+                    contentDescription = "Quitar ${folder.name}",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+    )
 }
