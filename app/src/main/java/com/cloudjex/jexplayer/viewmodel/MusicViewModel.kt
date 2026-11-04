@@ -2,7 +2,6 @@ package com.cloudjex.jexplayer.viewmodel
 
 import android.app.Application
 import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -59,6 +58,8 @@ import com.cloudjex.jexplayer.ui.player.FlacInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.DisposableHandle
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,6 +67,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -77,6 +79,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import com.cloudjex.jexplayer.data.local.FavoritesStore
 import com.cloudjex.jexplayer.data.update.CheckResult
 import com.cloudjex.jexplayer.data.update.GithubReleaseClient
@@ -86,7 +89,7 @@ import com.cloudjex.jexplayer.data.update.copyWithProgress
 import com.cloudjex.jexplayer.data.update.updateCheckStore
 import com.cloudjex.jexplayer.BuildConfig
 
-private const val UPDATE_APK_NAME = "JexPlayer-update.apk"
+private const val UPDATE_APK_PREFIX = "JexPlayer-update-"
 private const val PROGRESS_STEP_BYTES = 256L * 1024
 private const val MAX_REDIRECTS = 5
 
@@ -131,8 +134,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val restoredLastSong = lastSongStore.load()
     private var scanJob: Job? = null
     private var downloadJob: Job? = null
-    private var downloadConnection: HttpURLConnection? = null
     private var downloadApkFile: File? = null
+
+    /** Solo para desbloquear la I/O desde [cancelInAppDownload]; el dueño real es la corrutina. */
+    private val activeConnection = AtomicReference<Pair<Int, HttpURLConnection?>>(Pair(0, null))
+
+    @Volatile
+    private var downloadAttempt = 0
     private var userChangedScreen = false
     private var audioTagsJob: Job? = null
     @Volatile
@@ -465,12 +473,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _inAppUpdate.value = InAppUpdateState.Idle
     }
 
-    fun startInAppDownload(context: Context, downloadUrl: String) {
+    fun startInAppDownload(downloadUrl: String) {
         val available = _inAppUpdate.value as? InAppUpdateState.Available ?: return
         if (downloadJob?.isActive == true) return
         if (!available.isApk) {
             runCatching {
-                context.startActivity(
+                appContext.startActivity(
                     Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl))
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
@@ -478,18 +486,28 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _inAppUpdate.value = InAppUpdateState.Idle
             return
         }
-        val apkFile = File(context.cacheDir, UPDATE_APK_NAME)
+        deleteStaleApks()
+        val apkFile = File(appContext.cacheDir, "$UPDATE_APK_PREFIX${System.currentTimeMillis()}.apk")
         downloadApkFile = apkFile
+        val attempt = ++downloadAttempt
+        activeConnection.set(Pair(attempt, null))
         downloadJob = viewModelScope.launch(Dispatchers.IO) {
             _inAppUpdate.value = InAppUpdateState.Downloading(0L, 0L, 0f)
+            var connection: HttpURLConnection? = null
+            var unregisterOnCancel: DisposableHandle? = null
             try {
-                apkFile.delete()
-                val connection = openDownloadConnection(downloadUrl)
-                val totalBytes = connection.contentLengthLong.coerceAtLeast(0L)
+                val active = openDownloadConnection(downloadUrl, attempt)
+                connection = active
+                // Cancela la I/O bloqueante al instante; el finally la vuelve a cerrar.
+                unregisterOnCancel = currentCoroutineContext().job.invokeOnCompletion {
+                    active.disconnect()
+                }
+                val totalBytes = active.contentLengthLong.coerceAtLeast(0L)
                 var lastReported = 0L
-                connection.inputStream.use { input ->
+                var copied = 0L
+                active.inputStream.use { input ->
                     FileOutputStream(apkFile).use { output ->
-                        copyWithProgress(input, output, totalBytes) { downloaded, total ->
+                        copied = copyWithProgress(input, output, totalBytes) { downloaded, total ->
                             ensureActive()
                             if (downloaded - lastReported >= PROGRESS_STEP_BYTES || downloaded == total) {
                                 lastReported = downloaded
@@ -502,8 +520,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
-                _inAppUpdate.value = InAppUpdateState.Idle
-                installApk(context, apkFile, available)
+                if (copied <= 0L || (totalBytes > 0 && copied != totalBytes)) {
+                    error("Descarga incompleta: $copied de $totalBytes bytes")
+                }
+                _inAppUpdate.value = InAppUpdateState.ReadyToInstall(apkFile)
+                installApk(apkFile)
             } catch (cancelled: CancellationException) {
                 apkFile.delete()
                 throw cancelled
@@ -515,18 +536,26 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     _updateMessage.value = "No se pudo descargar la actualización."
                 }
             } finally {
-                downloadConnection = null
-                downloadJob = null
+                unregisterOnCancel?.dispose()
+                connection?.disconnect()
+                if (connection != null) unpublish(attempt, connection)
+                // Un intento viejo no debe limpiar el estado de uno nuevo.
+                if (downloadAttempt == attempt) downloadJob = null
             }
         }
     }
 
+    /** Borra los APK de intentos anteriores: el nombre es único para no pisar una descarga en curso. */
+    private fun deleteStaleApks() {
+        appContext.cacheDir.listFiles { file -> file.name.startsWith(UPDATE_APK_PREFIX) }
+            ?.forEach { it.delete() }
+    }
+
     fun cancelInAppDownload() {
-        // Cancelar primero: así el catch de la descarga no reabre el diálogo con un error.
+        // Cancelar primero: el catch no reabre el diálogo. Después se corta la I/O.
         downloadJob?.cancel()
+        activeConnection.getAndSet(Pair(-1, null)).second?.disconnect()
         downloadJob = null
-        downloadConnection?.disconnect()
-        downloadConnection = null
         val apkFile = downloadApkFile
         downloadApkFile = null
         _inAppUpdate.value = InAppUpdateState.Idle
@@ -534,7 +563,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Sigue redirecciones a mano: GitHub responde 302 hacia S3 y `HttpURLConnection` no las sigue entre hosts. */
-    private fun openDownloadConnection(url: String): HttpURLConnection {
+    private fun openDownloadConnection(url: String, attempt: Int): HttpURLConnection {
         var target = URL(url)
         repeat(MAX_REDIRECTS) {
             val connection = (target.openConnection() as HttpURLConnection).apply {
@@ -543,50 +572,79 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 readTimeout = 30_000
                 setRequestProperty("User-Agent", "JexPlayer")
             }
-            downloadConnection = connection
-            val code = connection.responseCode
-            if (code in 300..399) {
-                val location = connection.getHeaderField("Location")
+            if (!tryPublish(attempt, connection)) {
+                // Corrutina zombie de un intento anterior: matamos la conexión recién creada.
                 connection.disconnect()
-                if (location == null) error("Redirección sin Location")
-                target = URL(target, location)
-            } else {
-                if (code !in 200..299) error("HTTP $code")
-                return connection
+                throw CancellationException("Intento de descarga obsoleto")
             }
+            try {
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    val location = connection.getHeaderField("Location")
+                        ?: error("Redirección sin Location")
+                    target = URL(target, location)
+                } else {
+                    if (code !in 200..299) error("HTTP $code")
+                    return connection
+                }
+            } catch (failure: Exception) {
+                connection.disconnect()
+                unpublish(attempt, connection)
+                throw failure
+            }
+            connection.disconnect()
+            unpublish(attempt, connection)
         }
         error("Demasiadas redirecciones")
     }
 
-    private fun installApk(
-        context: Context,
-        apkFile: File,
-        available: InAppUpdateState.Available
-    ) {
+    /** Publica la conexión solo si el intento global es exactamente este; si no, devuelve `false`. */
+    private fun tryPublish(attempt: Int, connection: HttpURLConnection): Boolean {
+        while (true) {
+            val current = activeConnection.get()
+            if (current.first != attempt) return false
+            if (activeConnection.compareAndSet(current, Pair(attempt, connection))) return true
+        }
+    }
+
+    private fun unpublish(attempt: Int, connection: HttpURLConnection) {
+        activeConnection.updateAndGet { current ->
+            if (current.first == attempt && current.second === connection) {
+                Pair(current.first, null)
+            } else {
+                current
+            }
+        }
+    }
+
+    fun installApk(apkFile: File) {
+        // La caché pudo borrarse (pressure del sistema o process death).
+        if (!apkFile.exists() || apkFile.length() == 0L) {
+            _inAppUpdate.value = InAppUpdateState.Error(
+                "El archivo de actualización no se encontró. Por favor, vuelve a descargarlo."
+            )
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            !context.packageManager.canRequestPackageInstalls()
+            !appContext.packageManager.canRequestPackageInstalls()
         ) {
-            // shortcut: tras conceder el permiso hay que volver a descargar; reutilizar
-            // el APK ya bajado cuando el re-descargar moleste en la práctica.
-            _inAppUpdate.value = available
             _updateMessage.value =
-                "Activa la instalación de apps desconocidas y vuelve a descargar."
+                "Activa la instalación de apps desconocidas y pulsa Instalar de nuevo."
             runCatching {
-                context.startActivity(
+                appContext.startActivity(
                     Intent(
                         Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:${context.packageName}")
+                        Uri.parse("package:${appContext.packageName}")
                     ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
             }
             return
         }
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+        val uri = FileProvider.getUriForFile(appContext, "${appContext.packageName}.fileprovider", apkFile)
         val intent = Intent(Intent.ACTION_VIEW)
             .setDataAndType(uri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (runCatching { context.startActivity(intent) }.isFailure) {
-            _inAppUpdate.value = available
+        if (runCatching { appContext.startActivity(intent) }.isFailure) {
             _updateMessage.value = "No se encontró un instalador de paquetes."
         }
     }

@@ -29,7 +29,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -49,7 +48,6 @@ private val DialogSecondary = Color(0xFFBDBDBD)
 @Composable
 fun JexUpdateDialog(viewModel: MusicViewModel) {
     val state by viewModel.inAppUpdate.collectAsState()
-    val context = LocalContext.current
     if (state is InAppUpdateState.Idle) return
 
     Dialog(onDismissRequest = { viewModel.hideUpdate() }) {
@@ -65,9 +63,7 @@ fun JexUpdateDialog(viewModel: MusicViewModel) {
                 when (val current = state) {
                     is InAppUpdateState.Available -> AvailableContent(
                         update = current,
-                        onDownload = {
-                            viewModel.startInAppDownload(context, current.downloadUrl)
-                        },
+                        onDownload = { viewModel.startInAppDownload(current.downloadUrl) },
                         onDismissForever = viewModel::dismissUpdate,
                         onLater = viewModel::hideUpdate
                     )
@@ -75,6 +71,16 @@ fun JexUpdateDialog(viewModel: MusicViewModel) {
                     is InAppUpdateState.Downloading -> DownloadingContent(
                         downloading = current,
                         onCancel = viewModel::cancelInAppDownload
+                    )
+
+                    is InAppUpdateState.ReadyToInstall -> ReadyToInstallContent(
+                        onInstall = { viewModel.installApk(current.apkFile) },
+                        onLater = viewModel::hideUpdate
+                    )
+
+                    is InAppUpdateState.Error -> ErrorContent(
+                        message = current.message,
+                        onClose = viewModel::hideUpdate
                     )
 
                     InAppUpdateState.Idle -> Unit
@@ -246,6 +252,69 @@ private fun DownloadingContent(
         shape = RoundedCornerShape(16.dp)
     ) {
         Text("Cancelar", color = DialogSecondary)
+    }
+}
+
+@Composable
+private fun ErrorContent(
+    message: String,
+    onClose: () -> Unit
+) {
+    Text(
+        "Algo salió mal",
+        color = Color.White,
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.SemiBold,
+        textAlign = TextAlign.Center
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        message,
+        color = DialogSecondary,
+        style = MaterialTheme.typography.bodyMedium,
+        textAlign = TextAlign.Center
+    )
+    Spacer(Modifier.height(24.dp))
+    TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) {
+        Text("Cerrar", color = DialogSecondary)
+    }
+}
+
+@Composable
+private fun ReadyToInstallContent(
+    onInstall: () -> Unit,
+    onLater: () -> Unit
+) {
+    val accent = MaterialTheme.colorScheme.primary
+    Text(
+        "Descarga completada",
+        color = Color.White,
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.SemiBold,
+        textAlign = TextAlign.Center
+    )
+    Spacer(Modifier.height(6.dp))
+    Text(
+        "La actualización está lista para instalar.",
+        color = DialogSecondary,
+        style = MaterialTheme.typography.bodyMedium,
+        textAlign = TextAlign.Center
+    )
+    Spacer(Modifier.height(24.dp))
+    Button(
+        onClick = onInstall,
+        modifier = Modifier.fillMaxWidth().height(52.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = accent,
+            contentColor = MaterialTheme.colorScheme.onPrimary
+        )
+    ) {
+        Text("Instalar", fontWeight = FontWeight.SemiBold)
+    }
+    Spacer(Modifier.height(4.dp))
+    TextButton(onClick = onLater, modifier = Modifier.fillMaxWidth()) {
+        Text("Más tarde", color = DialogSecondary)
     }
 }
 

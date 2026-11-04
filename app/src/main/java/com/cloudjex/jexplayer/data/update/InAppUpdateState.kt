@@ -1,5 +1,6 @@
 package com.cloudjex.jexplayer.data.update
 
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.Locale
@@ -23,6 +24,12 @@ sealed interface InAppUpdateState {
         val totalBytes: Long,
         val progress: Float
     ) : InAppUpdateState
+
+    /** APK íntegro en disco: falta instalar (o conceder el permiso e instalar). */
+    data class ReadyToInstall(val apkFile: File) : InAppUpdateState
+
+    /** Error visible para el usuario (p. ej. el APK desapareció de la caché). */
+    data class Error(val message: String) : InAppUpdateState
 }
 
 internal fun formatMegabytes(bytes: Long): String =
