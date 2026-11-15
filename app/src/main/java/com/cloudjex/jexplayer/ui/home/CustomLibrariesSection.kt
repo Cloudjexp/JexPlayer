@@ -44,6 +44,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -514,7 +516,7 @@ private fun FavoritesCard(
     count: Int,
     onClick: () -> Unit
 ) {
-    PlaylistCard {
+    JexOutlinedCard {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -542,16 +544,23 @@ private fun FavoritesCard(
     }
 }
 
-/** Contenedor común de las listas: borde ultrafino y fondo casi imperceptible. */
+/** Contenedor outlined compartido: borde ultrafino y fondo casi imperceptible. */
 @Composable
-private fun PlaylistCard(content: @Composable ColumnScope.() -> Unit) {
+internal fun JexOutlinedCard(
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(12.dp),
+    containerColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
+    border: BorderStroke = BorderStroke(
+        1.dp,
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+    ),
+    content: @Composable ColumnScope.() -> Unit
+) {
     OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-        colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
-        ),
+        modifier = modifier.fillMaxWidth(),
+        shape = shape,
+        border = border,
+        colors = CardDefaults.outlinedCardColors(containerColor = containerColor),
         content = content
     )
 }
@@ -615,7 +624,7 @@ private fun CustomLibraryCard(
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
 
-    PlaylistCard {
+    JexOutlinedCard {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
