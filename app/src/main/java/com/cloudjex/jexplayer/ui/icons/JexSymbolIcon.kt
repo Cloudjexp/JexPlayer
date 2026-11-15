@@ -11,16 +11,20 @@ import com.cloudjex.jexplayer.R
 
 /** Símbolos Rounded oficiales empaquetados como vectores Android locales. */
 enum class JexSymbol(@param:DrawableRes val resourceId: Int) {
+    Album(R.drawable.ms_album),
     ArrowBack(R.drawable.ms_arrow_back),
     Close(R.drawable.ms_close),
     Download(R.drawable.ms_download),
     Favorite(R.drawable.ms_favorite),
     Filter(R.drawable.ms_filter_list),
     Folder(R.drawable.ms_folder),
+    History(R.drawable.ms_history),
+    Home(R.drawable.ms_home),
     LibraryMusic(R.drawable.ms_library_music),
     Lyrics(R.drawable.ms_lyrics),
     MusicNote(R.drawable.ms_music_note),
     Pause(R.drawable.ms_pause),
+    Person(R.drawable.ms_person),
     PlayArrow(R.drawable.ms_play_arrow),
     QueueMusic(R.drawable.ms_queue_music),
     Refresh(R.drawable.ms_refresh),

@@ -24,6 +24,7 @@ import com.cloudjex.jexplayer.data.local.CustomLibrariesStore
 import com.cloudjex.jexplayer.data.local.LibrarySortPreferenceStore
 import com.cloudjex.jexplayer.data.local.LibraryCache
 import com.cloudjex.jexplayer.data.local.LastSongStore
+import com.cloudjex.jexplayer.data.local.PlaybackHistoryStore
 import com.cloudjex.jexplayer.data.local.LyricsSettingsStore
 import com.cloudjex.jexplayer.data.local.ScreenPreferenceStore
 import com.cloudjex.jexplayer.data.lyrics.LyricsDocument
@@ -63,9 +64,14 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -132,6 +138,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val customLibrariesStore = CustomLibrariesStore.from(appContext)
     private val customLibrariesSaveMutex = Mutex()
     private val lastSongStore = LastSongStore(appContext)
+    private val playbackHistoryStore = PlaybackHistoryStore.from(appContext)
     private val restoredLastSong = lastSongStore.load()
     private var scanJob: Job? = null
     private var downloadJob: Job? = null
@@ -156,7 +163,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var playbackRestored = false
     private var playbackContext: PlaybackContext = PlaybackContext.Library
 
+    /**
+     * Caché en disco tal como la conoce el ViewModel. El flujo espejo permite
+     * derivar "Añadido recientemente" sin exponer ni duplicar la caché.
+     */
+    private val cachedEntriesFlow = MutableStateFlow<List<CachedSong>>(emptyList())
     private var cachedEntries: List<CachedSong> = emptyList()
+        set(value) {
+            field = value
+            cachedEntriesFlow.value = value
+        }
     private var cacheLoaded = false
     private var libraryScanCompleted = false
     private var canonicalSongs: List<Song> = emptyList()
@@ -181,6 +197,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 ?: mediaItem?.toSongFallback())?.let { song ->
                 _restoredSong.value = song
                 lastSongStore.save(song, 0L)
+                recordPlaybackHistory(song.id)
                 _duration.value = song.duration
                 // Los tags se cargan solos en cada cambio de canción, así están
                 // disponibles en cualquier pantalla sin que la UI lo pida.
@@ -209,6 +226,46 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     /** `false` hasta que la caché publica su primera lista real de canciones. */
     private val _isLibraryInitialized = MutableStateFlow(false)
     val isLibraryInitialized: StateFlow<Boolean> = _isLibraryInitialized.asStateFlow()
+
+    /** Proyección sin tipos Android de la biblioteca visible; base del panel. */
+    val songEntries: StateFlow<List<SongEntry>> =
+        _songs.map { songs -> songs.map { it.toEntry() } }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Agrupaciones del panel, calculadas fuera del hilo principal. */
+    val albumGroups: StateFlow<List<AlbumGroup>> =
+        songEntries.map { entries -> groupAlbumsFor(entries) }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val artistGroups: StateFlow<List<ArtistGroup>> =
+        songEntries.map { entries -> groupArtistsFor(entries) }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Historial de reproducción, más reciente primero. */
+    val recentlyPlayed: StateFlow<List<DashboardMediaItem>> =
+        combine(playbackHistoryStore.entries, songEntries) { entries, songs ->
+            recentlyPlayedItems(entries, songs.associateBy { it.id })
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Ordenado por fecha de modificación del archivo, no por incorporación real. */
+    val recentlyAdded: StateFlow<List<CachedSong>> =
+        cachedEntriesFlow
+            .map { entries -> recentlyAddedSongs(entries) }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** `null` mientras la biblioteca se restaura: evita mostrar ceros falsos. */
+    val libraryStats: StateFlow<LibraryStats?> =
+        combine(songEntries, _isLibraryInitialized) { entries, initialized ->
+            if (initialized) libraryStatsFor(entries) else null
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private val _librarySortSettings = MutableStateFlow(LibrarySortSettings())
     val librarySortSettings: StateFlow<LibrarySortSettings> =
@@ -348,11 +405,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        // Lectura única del historial fuera del hilo principal; la UI se
+        // suscribe cuando el panel se compone.
+        viewModelScope.launch { playbackHistoryStore.load() }
+
         controllerFuture.addListener(
             {
                 val connected = runCatching { controllerFuture.get() }.getOrNull()
                     ?: return@addListener
-
                 controller = connected
                 connected.addListener(playerListener)
 
@@ -1508,6 +1568,24 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Reproducción pedida desde el panel de inicio. Si la canción ya está en la
+     * cola activa se conserva ese contexto; si no, se reproduce dentro de la
+     * biblioteca completa (la cola activa podría no contenerla y `playSong`
+     * terminaría sin reproducir nada).
+     */
+    fun playSongFromDashboard(song: Song) {
+        if (activeQueueSongs().any { it.id == song.id }) {
+            playSong(song)
+        } else {
+            playSong(song, PlaybackContext.Library, _songs.value)
+        }
+    }
+
+    private fun recordPlaybackHistory(songId: String) {
+        viewModelScope.launch { playbackHistoryStore.record(songId) }
+    }
+
+    /**
      * Inicia la canción dentro de la secuencia desde la que se seleccionó.
      * La secuencia se entrega a Media3 una sola vez; los botones siguiente y
      * anterior navegan después por la cola del propio Player.
@@ -1531,6 +1609,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _currentPosition.value = 0L
         _duration.value = song.duration
         lastSongStore.save(song, 0L)
+        recordPlaybackHistory(song.id)
         playbackRestored = true
         cargarAudioTags(song)
 
