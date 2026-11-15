@@ -1,5 +1,6 @@
 package com.cloudjex.jexplayer.ui.home
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -567,69 +568,48 @@ private fun LibraryHeader(
     onSearch: () -> Unit,
     onSettings: () -> Unit
 ) {
-    Surface(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceContainerLow
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.padding(start = 8.dp, end = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column {
+            Text(
+                text = "Biblioteca",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = if (isScanning) "Actualizando tu música…" else "Tu música local",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        AnimatedVisibility(
+            visible = !isSearchVisible,
+            enter = fadeIn(),
+            exit = fadeOut()
         ) {
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.primaryContainer
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    JexSymbolIcon(
-                        symbol = JexSymbol.LibraryMusic,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-
-            Column(modifier = Modifier.padding(start = 12.dp)) {
-                Text(
-                    text = "Biblioteca",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = if (isScanning) "Actualizando tu música…" else "Tu música local",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Spacer(modifier = Modifier.weight(1f))
-
-            AnimatedVisibility(
-                visible = !isSearchVisible,
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                IconButton(onClick = onSearch) {
-                    JexSymbolIcon(
-                        symbol = JexSymbol.Search,
-                        contentDescription = "Buscar canciones",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-
-            IconButton(onClick = onSettings) {
+            IconButton(onClick = onSearch) {
                 JexSymbolIcon(
-                    symbol = JexSymbol.Settings,
-                    contentDescription = "Ajustes",
+                    symbol = JexSymbol.Search,
+                    contentDescription = "Buscar canciones",
                     tint = MaterialTheme.colorScheme.onSurface
                 )
             }
+        }
+
+        IconButton(onClick = onSettings) {
+            JexSymbolIcon(
+                symbol = JexSymbol.Settings,
+                contentDescription = "Ajustes",
+                tint = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 
@@ -654,8 +634,9 @@ private fun SearchField(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(4.dp),
-        color = MaterialTheme.colorScheme.surface
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -925,17 +906,22 @@ internal fun SongItem(
     }
     val rowShape = remember { RoundedCornerShape(14.dp) }
 
-    Surface(
+    JexOutlinedCard(
         modifier = Modifier
-            .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
             .clickable(onClick = onClick),
         shape = rowShape,
-        color = if (isCurrent) {
-            // El estado activo se reconoce sin convertir la fila en un bloque rojo.
-            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+        // La fila activa se reconoce por un tinte y un borde finos, sin
+        // convertirla en un bloque de color sólido.
+        containerColor = if (isCurrent) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.18f)
         } else {
-            MaterialTheme.colorScheme.surfaceContainer
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+        },
+        border = if (isCurrent) {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
+        } else {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         }
     ) {
         Row(
