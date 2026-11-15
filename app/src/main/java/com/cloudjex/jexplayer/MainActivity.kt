@@ -19,6 +19,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.DisposableEffect
@@ -44,6 +46,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -56,6 +59,11 @@ import com.cloudjex.jexplayer.ui.home.HomeScreen
 import com.cloudjex.jexplayer.ui.home.WelcomeScreen
 import com.cloudjex.jexplayer.ui.home.JexUpdateDialog
 import com.cloudjex.jexplayer.ui.home.SettingsScreen
+import com.cloudjex.jexplayer.ui.home.DashboardScreen
+import com.cloudjex.jexplayer.ui.home.MiniPlayerHost
+import com.cloudjex.jexplayer.ui.icons.JexSymbol
+import com.cloudjex.jexplayer.ui.navigation.JexBottomBar
+import com.cloudjex.jexplayer.ui.navigation.JexBottomBarItem
 import com.cloudjex.jexplayer.ui.player.PlayerScreen
 import com.cloudjex.jexplayer.ui.theme.JexPlayerTheme
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
@@ -108,6 +116,17 @@ class MainActivity : ComponentActivity() {
                      val currentScreen = rememberUpdatedState(restoredScreen)
                       var settingsOpen by rememberSaveable { mutableStateOf(false) }
                       var selectedTab by rememberSaveable { mutableStateOf(0) }
+                      var appTab by rememberSaveable { mutableStateOf(0) }
+                      var pendingSearchOpen by rememberSaveable { mutableStateOf(false) }
+                      var pendingOpenFavorites by rememberSaveable { mutableStateOf(false) }
+                      var floatingContentHeightPx by remember { mutableStateOf(0) }
+                      val bottomContentPadding = with(LocalDensity.current) {
+                          floatingContentHeightPx.toDp()
+                      }
+                      // Inicio y Biblioteca se desmontan al alternar; el holder
+                      // conserva el estado guardable de cada destino (búsqueda,
+                      // filtros, sub-pestaña) para no perderlo al volver.
+                      val appStateHolder = rememberSaveableStateHolder()
 
                      // Se escribe solo cuando el gesto termina. Observar el offset
                      // directamente creaba un objeto y reactivaba el debounce en cada
@@ -175,6 +194,16 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    // Con destinos de aplicación, atrás vuelve a Inicio antes de
+                    // salir. Nunca compite con el reproductor ni con ajustes.
+                    BackHandler(
+                        enabled = !settingsOpen &&
+                            restoredScreen != true &&
+                            appTab != 0
+                    ) {
+                        appTab = 0
+                    }
+
                     val transitionOffsetPx = with(LocalDensity.current) { 20.dp.roundToPx() }
 
                      Scaffold(
@@ -236,20 +265,77 @@ class MainActivity : ComponentActivity() {
                                             }
                                         )
                                     } else {
-                                        HomeScreen(
-                                            viewModel = vm,
-                                            selectedTab = selectedTab,
-                                            onTabSelected = { selectedTab = it },
-                                            listState = libraryListState,
-                                            pendingFollowId = pendingLibraryFollowId,
-                                            onPendingFollowHandled = { songId ->
-                                                if (pendingLibraryFollowId == songId) {
-                                                    pendingLibraryFollowId = null
+                                        Box(modifier = Modifier.fillMaxSize()) {
+                                            appStateHolder.SaveableStateProvider(
+                                                if (appTab == 0) "inicio" else "biblioteca"
+                                            ) {
+                                                if (appTab == 0) {
+                                                    DashboardScreen(
+                                                        viewModel = vm,
+                                                        bottomContentPadding = bottomContentPadding,
+                                                        onOpenSearch = {
+                                                            appTab = 1
+                                                            pendingSearchOpen = true
+                                                        },
+                                                        onOpenSettings = { settingsOpen = true },
+                                                        onOpenFavorites = {
+                                                            selectedTab = 1
+                                                            appTab = 2
+                                                            pendingOpenFavorites = true
+                                                        }
+                                                    )
+                                                } else {
+                                                    HomeScreen(
+                                                        viewModel = vm,
+                                                        selectedTab = selectedTab,
+                                                        onTabSelected = { selectedTab = it },
+                                                        listState = libraryListState,
+                                                        pendingFollowId = pendingLibraryFollowId,
+                                                        onPendingFollowHandled = { songId ->
+                                                            if (pendingLibraryFollowId == songId) {
+                                                                pendingLibraryFollowId = null
+                                                            }
+                                                        },
+                                                        onOpenSettings = { settingsOpen = true },
+                                                        bottomContentPadding = bottomContentPadding,
+                                                        pendingSearchOpen = pendingSearchOpen,
+                                                        onSearchOpenHandled = {
+                                                            pendingSearchOpen = false
+                                                        },
+                                                        onSearchClosed = {
+                                                            if (appTab == 1) appTab = 2
+                                                        },
+                                                        pendingOpenFavorites = pendingOpenFavorites,
+                                                        onOpenFavoritesHandled = {
+                                                            pendingOpenFavorites = false
+                                                        }
+                                                    )
                                                 }
-                                            },
-                                            onOpenPlayer = { vm.setShowPlayer(true) },
-                                            onOpenSettings = { settingsOpen = true }
-                                        )
+                                            }
+
+                                            Column(
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomCenter)
+                                                    .fillMaxWidth()
+                                                    .onSizeChanged {
+                                                        floatingContentHeightPx = it.height
+                                                    }
+                                            ) {
+                                                MiniPlayerHost(
+                                                    songs = songs,
+                                                    viewModel = vm,
+                                                    onOpenPlayer = { vm.setShowPlayer(true) }
+                                                )
+                                                JexBottomBar(
+                                                    items = APP_BOTTOM_BAR_ITEMS,
+                                                    selectedTab = appTab,
+                                                    onTabSelected = { tab ->
+                                                        if (tab == 1) pendingSearchOpen = true
+                                                        appTab = tab
+                                                    }
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -270,8 +356,7 @@ class MainActivity : ComponentActivity() {
 /**
  * Pantalla neutra mientras se lee la última pantalla guardada. Evita mostrar la
  * biblioteca como contenido provisional antes del reproductor.
- */
-@Composable
+ */@Composable
 private fun ScreenLoading() {
     Box(
         modifier = Modifier
@@ -282,3 +367,10 @@ private fun ScreenLoading() {
         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
     }
 }
+
+/** Destinos principales de la aplicación, en el orden de la barra inferior. */
+private val APP_BOTTOM_BAR_ITEMS = listOf(
+    JexBottomBarItem(icon = JexSymbol.Home, label = "Inicio"),
+    JexBottomBarItem(icon = JexSymbol.Search, label = "Buscar"),
+    JexBottomBarItem(icon = JexSymbol.LibraryMusic, label = "Biblioteca")
+)

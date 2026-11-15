@@ -29,6 +29,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -65,7 +67,6 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.layout.onSizeChanged
 import com.cloudjex.jexplayer.data.artwork.ArtworkRepository
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
 import com.cloudjex.jexplayer.data.model.MusicFolder
@@ -74,9 +75,9 @@ import com.cloudjex.jexplayer.data.model.LibrarySortSettings
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import com.cloudjex.jexplayer.viewmodel.PlaybackContext
+import com.cloudjex.jexplayer.viewmodel.shouldShowEmptyLibrary
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
-import com.cloudjex.jexplayer.ui.navigation.JexBottomBar
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.collectLatest
@@ -91,8 +92,13 @@ fun HomeScreen(
     listState: LazyListState = rememberLazyListState(),
     pendingFollowId: String? = null,
     onPendingFollowHandled: (String) -> Unit = {},
-    onOpenPlayer: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    bottomContentPadding: Dp = 0.dp,
+    pendingSearchOpen: Boolean = false,
+    onSearchOpenHandled: () -> Unit = {},
+    onSearchClosed: () -> Unit = {},
+    pendingOpenFavorites: Boolean = false,
+    onOpenFavoritesHandled: () -> Unit = {}
 ) {
     val songs by viewModel.songs.collectAsState()
     val favoriteIds by viewModel.favoriteIds.collectAsState()
@@ -100,6 +106,7 @@ fun HomeScreen(
     val revokedFolderUris by viewModel.revokedFolderUris.collectAsState()
     val folderMessage by viewModel.folderMessage.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
+    val isLibraryInitialized by viewModel.isLibraryInitialized.collectAsState()
     val customLibraries by viewModel.customLibraries.collectAsState()
     val customLibrariesReady by viewModel.customLibrariesReady.collectAsState()
     val libraryMessage by viewModel.libraryMessage.collectAsState()
@@ -133,6 +140,22 @@ fun HomeScreen(
         }
     }
 
+    LaunchedEffect(pendingSearchOpen) {
+        if (pendingSearchOpen) {
+            onTabSelected(0)
+            isSearchVisible = true
+            onSearchOpenHandled()
+        }
+    }
+
+    LaunchedEffect(pendingOpenFavorites) {
+        if (pendingOpenFavorites) {
+            selectedLibraryId = null
+            showFavoritesPlaylist = true
+            onOpenFavoritesHandled()
+        }
+    }
+
     BackHandler(
         enabled = (selectedLibraryId != null || showFavoritesPlaylist) &&
             libraryDialogSongId == null
@@ -161,14 +184,26 @@ fun HomeScreen(
     Box(
         modifier = Modifier.fillMaxSize()
     ) {
-        var floatingContentHeightPx by remember { mutableStateOf(0) }
-        val floatingContentHeight = with(LocalDensity.current) {
-            floatingContentHeightPx.toDp()
-        }
-
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
+
+            // Las sub-pestañas de la biblioteca antes vivían en la barra
+            // inferior; ahora esa barra es de la aplicación y esta tira queda
+            // dentro de Biblioteca, conservando el mismo estado.
+            TabRow(
+                selectedTabIndex = selectedTab,
+                containerColor = MaterialTheme.colorScheme.background,
+                contentColor = MaterialTheme.colorScheme.primary
+            ) {
+                listOf("Música", "Listas", "Carpetas").forEachIndexed { index, label ->
+                    Tab(
+                        selected = selectedTab == index,
+                        onClick = { onTabSelected(index) },
+                        text = { Text(text = label) }
+                    )
+                }
+            }
 
             // Cambia el contenido según la pestaña seleccionada
             when (selectedTab) {
@@ -197,6 +232,7 @@ fun HomeScreen(
                         onClose = {
                             searchQuery = ""
                             isSearchVisible = false
+                            onSearchClosed()
                         }
                     )
                 }
@@ -234,7 +270,12 @@ fun HomeScreen(
                 }
 
                 Box(modifier = Modifier.weight(1f)) {
-                    if (filteredSongs.isEmpty()) {
+                    // Mientras la caché restaura (sin scan activo ni primera
+                    // publicación) la biblioteca no está vacía: no se muestra
+                    // el estado vacío prematuro.
+                    if (filteredSongs.isEmpty() &&
+                        shouldShowEmptyLibrary(isScanning, isLibraryInitialized)
+                    ) {
                         EmptyLibrary(
                             message = when {
                                 searchQuery.isNotBlank() ||
@@ -255,7 +296,7 @@ fun HomeScreen(
                             viewModel = viewModel,
                             listState = listState,
                             pendingFollowId = pendingFollowId,
-                            bottomContentPadding = floatingContentHeight,
+                            bottomContentPadding = bottomContentPadding,
                             onPendingFollowHandled = onPendingFollowHandled,
                             onAddToLibrary = { song ->
                                 libraryDialogSongId = song.id
@@ -284,7 +325,7 @@ fun HomeScreen(
                             favoriteIds = favoriteIds,
                             currentSongId = currentSongId,
                             onBack = { selectedLibraryId = null },
-                            bottomContentPadding = floatingContentHeight,
+                            bottomContentPadding = bottomContentPadding,
                             onAddToLibrary = { song ->
                                 libraryDialogSongId = song.id
                             }
@@ -298,7 +339,7 @@ fun HomeScreen(
                             favoriteSongs = favoriteSongs,
                             currentSongId = currentSongId,
                             onBack = { showFavoritesPlaylist = false },
-                            bottomContentPadding = floatingContentHeight,
+                            bottomContentPadding = bottomContentPadding,
                             onAddToLibrary = { song ->
                                 libraryDialogSongId = song.id
                             }
@@ -314,7 +355,7 @@ fun HomeScreen(
                             customLibraries = customLibraries,
                             customLibrariesReady = customLibrariesReady,
                             libraryMessage = libraryMessage,
-                            bottomContentPadding = floatingContentHeight,
+                            bottomContentPadding = bottomContentPadding,
                             onOpenFavorites = {
                                 selectedLibraryId = null
                                 showFavoritesPlaylist = true
@@ -343,21 +384,6 @@ fun HomeScreen(
                 }
             }
             }
-        }
-
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .onSizeChanged { floatingContentHeightPx = it.height }
-        ) {
-            MiniPlayerHost(songs = songs, viewModel = viewModel, onOpenPlayer = onOpenPlayer)
-
-            // BARRA DE NAVEGACIÓN INFERIOR
-            JexBottomBar(
-                selectedTab = selectedTab,
-                onTabSelected = onTabSelected
-            )
         }
 
         libraryDialogSongId?.let { songId ->
@@ -527,37 +553,6 @@ private fun LibrarySongList(
                 scrollIdle = scrollIdle
             )
         }
-    }
-}
-
-@Composable
-private fun MiniPlayerHost(
-    songs: List<Song>,
-    viewModel: MusicViewModel,
-    onOpenPlayer: () -> Unit
-) {
-    val currentSongId by viewModel.currentSongId.collectAsState()
-    val restoredSong by viewModel.restoredSong.collectAsState()
-    val isPlaying by viewModel.isPlaying.collectAsState()
-    val isShuffleEnabled by viewModel.isShuffleEnabled.collectAsState()
-    val repeatMode by viewModel.repeatMode.collectAsState()
-    val songsById = remember(songs) { songs.associateBy { it.id } }
-    val currentSong = songsById[currentSongId]
-        ?: restoredSong?.takeIf { it.id == currentSongId }
-
-    if (currentSong != null) {
-        MiniPlayer(
-            song = currentSong,
-            isPlaying = isPlaying,
-            isShuffleEnabled = isShuffleEnabled,
-            repeatMode = repeatMode,
-            onPrevious = { viewModel.previousSong() },
-            onPlayPause = { viewModel.togglePlayPause() },
-            onNext = { viewModel.nextSong() },
-            onShuffle = { viewModel.toggleShuffle() },
-            onRepeat = { viewModel.toggleRepeat() },
-            onOpenPlayer = onOpenPlayer
-        )
     }
 }
 

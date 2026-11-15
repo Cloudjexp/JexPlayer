@@ -16,32 +16,21 @@ import androidx.compose.foundation.layout.size
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
 
+/** Un destino de la barra inferior de la aplicación. */
+data class JexBottomBarItem(
+    val icon: JexSymbol,
+    val label: String
+)
+
 @Composable
 fun JexBottomBar(
+    items: List<JexBottomBarItem>,
     selectedTab: Int,
     onTabSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
     showLabels: Boolean = true,
     compact: Boolean = false
 ) {
-    val items = listOf(
-        BottomBarItem(
-            JexSymbol.LibraryMusic,
-            "Música",
-            selected = selectedTab == 0
-        ),
-        BottomBarItem(
-            JexSymbol.QueueMusic,
-            "Listas",
-            selected = selectedTab == 1
-        ),
-        BottomBarItem(
-            JexSymbol.Folder,
-            "Carpetas",
-            selected = selectedTab == 2
-        )
-    )
-
     NavigationBar(
         modifier = modifier
             .navigationBarsPadding()
@@ -55,7 +44,7 @@ fun JexBottomBar(
     ) {
         items.forEachIndexed { index, item ->
             NavigationBarItem(
-                selected = item.selected,
+                selected = index == selectedTab,
                 onClick = { onTabSelected(index) },
                 icon = {
                     JexSymbolIcon(
@@ -73,9 +62,3 @@ fun JexBottomBar(
         }
     }
 }
-
-private data class BottomBarItem(
-    val icon: JexSymbol,
-    val label: String,
-    val selected: Boolean
-)
