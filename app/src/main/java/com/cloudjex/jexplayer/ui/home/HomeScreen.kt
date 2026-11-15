@@ -74,6 +74,7 @@ import com.cloudjex.jexplayer.data.model.LibrarySortSettings
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import com.cloudjex.jexplayer.viewmodel.PlaybackContext
+import com.cloudjex.jexplayer.viewmodel.shouldShowEmptyLibrary
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
 import com.cloudjex.jexplayer.ui.navigation.JexBottomBar
@@ -100,6 +101,7 @@ fun HomeScreen(
     val revokedFolderUris by viewModel.revokedFolderUris.collectAsState()
     val folderMessage by viewModel.folderMessage.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
+    val isLibraryInitialized by viewModel.isLibraryInitialized.collectAsState()
     val customLibraries by viewModel.customLibraries.collectAsState()
     val customLibrariesReady by viewModel.customLibrariesReady.collectAsState()
     val libraryMessage by viewModel.libraryMessage.collectAsState()
@@ -234,7 +236,12 @@ fun HomeScreen(
                 }
 
                 Box(modifier = Modifier.weight(1f)) {
-                    if (filteredSongs.isEmpty()) {
+                    // Mientras la caché restaura (sin scan activo ni primera
+                    // publicación) la biblioteca no está vacía: no se muestra
+                    // el estado vacío prematuro.
+                    if (filteredSongs.isEmpty() &&
+                        shouldShowEmptyLibrary(isScanning, isLibraryInitialized)
+                    ) {
                         EmptyLibrary(
                             message = when {
                                 searchQuery.isNotBlank() ||

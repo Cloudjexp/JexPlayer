@@ -69,6 +69,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -205,6 +206,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs.asStateFlow()
 
+    /** `false` hasta que la caché publica su primera lista real de canciones. */
+    private val _isLibraryInitialized = MutableStateFlow(false)
+    val isLibraryInitialized: StateFlow<Boolean> = _isLibraryInitialized.asStateFlow()
+
     private val _librarySortSettings = MutableStateFlow(LibrarySortSettings())
     val librarySortSettings: StateFlow<LibrarySortSettings> =
         _librarySortSettings.asStateFlow()
@@ -314,6 +319,35 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val audioTagsCache = mutableMapOf<String, AudioTags?>()
 
     init {
+        // Preferencias que el primer frame necesita para no parpadear: tema,
+        // acento, pantalla destino y orden de la biblioteca. Son archivos
+        // DataStore diminutos leídos una sola vez: resolverlos aquí elimina el
+        // círculo de carga centrado, el doble ordenamiento del arranque y la
+        // carrera entre la publicación de la caché y el ajuste de orden. El
+        // splash del sistema cubre esta espera de pocos milisegundos.
+        runBlocking {
+            _selectedAppearanceTheme.value = try {
+                appearancePreferences.selectedTheme.first()
+            } catch (_: IOException) {
+                AppearanceTheme.default
+            }
+            _selectedAppearanceAccent.value = try {
+                appearancePreferences.selectedAccent.first()
+            } catch (_: IOException) {
+                AppearanceAccent.default
+            }
+            _showPlayer.value = try {
+                screenPreferences.lastScreen.first()
+            } catch (_: IOException) {
+                false
+            }
+            _librarySortSettings.value = try {
+                librarySortPreferences.settings.first()
+            } catch (_: IOException) {
+                LibrarySortSettings()
+            }
+        }
+
         controllerFuture.addListener(
             {
                 val connected = runCatching { controllerFuture.get() }.getOrNull()
@@ -359,12 +393,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        viewModelScope.launch {
-            _librarySortSettings.value = librarySortPreferences.settings.first()
-            publishSortedLibrary()
-        }
-
-        reloadLibrary()
+        reloadLibrary(LibraryReloadCause.Startup)
         restoredLastSong?.song?.let(::cargarAudioTags)
 
 // Observar los favoritos guardados
@@ -396,31 +425,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     "Error collecting favorites",
                     e
                 )
-            }
-        }
-
-// Se resuelve la preferencia antes de que la UI dibuje Home o Player;
-// hasta entonces `showPlayer` es `null` y no se muestra ninguna pantalla.
-        viewModelScope.launch {
-            val saved = screenPreferences.lastScreen.first()
-            if (!userChangedScreen) {
-                _showPlayer.value = saved
-            }
-        }
-
-        viewModelScope.launch {
-            _selectedAppearanceTheme.value = try {
-                appearancePreferences.selectedTheme.first()
-            } catch (_: IOException) {
-                AppearanceTheme.default
-            }
-        }
-
-        viewModelScope.launch {
-            _selectedAppearanceAccent.value = try {
-                appearancePreferences.selectedAccent.first()
-            } catch (_: IOException) {
-                AppearanceAccent.default
             }
         }
 
@@ -800,7 +804,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             "Esa carpeta ya estaba registrada."
         }
 
-        reloadLibrary()
+        reloadLibrary(LibraryReloadCause.FoldersChanged)
     }
 
     fun removeFolder(folder: MusicFolder) {
@@ -813,7 +817,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         folderRepository.removeFolder(folder.uri)
         _folderMessage.value = "Carpeta retirada: ${folder.name}"
-        reloadLibrary()
+        reloadLibrary(LibraryReloadCause.FoldersChanged)
     }
 
     fun refreshFolders() {
@@ -825,7 +829,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             .toSet()
     }
 
-    private fun reloadLibrary() {
+    private fun reloadLibrary(cause: LibraryReloadCause) {
         refreshFolders()
 
         val folders = activeFolderUris()
@@ -838,12 +842,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
             setCanonicalSongs(visibleCache(folders).map { it.toSong() })
 
-            updateLibrary(folders)
+            updateLibrary(folders, cause)
         }
     }
 
     fun refreshLibrary() {
-        reloadLibrary()
+        reloadLibrary(LibraryReloadCause.Manual)
     }
 
     fun setLibrarySort(field: LibrarySortField, direction: LibrarySortDirection) {
@@ -867,6 +871,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             withContext(Dispatchers.Main.immediate) {
                 if (canonicalSongs === source && _librarySortSettings.value == settings) {
                     _songs.value = sorted
+                    // La primera emisión real marca la inicialización: hasta
+                    // entonces una lista vacía no es una biblioteca vacía.
+                    _isLibraryInitialized.value = true
                 }
             }
         }
@@ -1134,7 +1141,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun updateLibrary(folders: List<Uri>) {
+    private suspend fun updateLibrary(folders: List<Uri>, cause: LibraryReloadCause) {
         libraryScanCompleted = false
 
         if (folders.isEmpty()) {
@@ -1155,9 +1162,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        _isScanning.value = true
+        // El scan de arranque sobre una caché ya pintada es una revalidación
+        // silenciosa: solo la importación inicial y las acciones explícitas
+        // del usuario (refresco manual, alta/baja de carpeta) muestran el
+        // indicador de escaneo.
+        val baselineEntries = visibleCache(folders)
+        if (shouldShowScanIndicator(cause, baselineEntries.isNotEmpty())) {
+            _isScanning.value = true
+        }
 
-        val baseline = visibleCache(folders).associateBy { it.id }
+        val baseline = baselineEntries.associateBy { it.id }
         val outcome = scanner.scan(folders, baseline)
         actualizarIndiceLetras(folders, outcome)
 
@@ -1172,7 +1186,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }.distinctBy { it.id }
 
-        setCanonicalSongs(merged.map { it.toSong() })
+        // Una revalidación sin cambios no debe re-emitir la lista (una nueva
+        // instancia dispararía la recomposición de toda la biblioteca y podría
+        // mover el scroll); solo se publica si el scan cambió algo.
+        if (shouldRepublishLibrary(merged, baselineEntries)) {
+            setCanonicalSongs(merged.map { it.toSong() })
+        }
         syncActiveQueue()
         libraryScanCompleted = true
         _isScanning.value = false
