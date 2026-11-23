@@ -47,7 +47,10 @@ internal fun LibrarySortButton(
     var expanded by rememberSaveable { mutableStateOf(false) }
 
     Box {
-        OutlinedButton(onClick = { expanded = true }) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+        ) {
             JexSymbolIcon(
                 symbol = JexSymbol.Filter,
                 contentDescription = null,

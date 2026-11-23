@@ -1,5 +1,7 @@
 package com.cloudjex.jexplayer.ui.home
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -28,8 +30,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -47,6 +47,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -64,9 +65,6 @@ import com.cloudjex.jexplayer.data.artwork.ArtworkRepository
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
-import com.cloudjex.jexplayer.data.model.LibrarySortField
-import com.cloudjex.jexplayer.data.model.LibrarySortDirection
-import com.cloudjex.jexplayer.data.model.LibrarySortSettings
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
 import com.cloudjex.jexplayer.viewmodel.PlaybackContext
@@ -168,43 +166,42 @@ fun HomeScreen(
             modifier = Modifier.fillMaxSize()
         ) {
 
-            // Las sub-pestañas de la biblioteca antes vivían en la barra
-            // inferior; ahora esa barra es de la aplicación y esta tira queda
-            // dentro de Biblioteca, conservando el mismo estado.
-            TabRow(
-                selectedTabIndex = selectedTab,
-                containerColor = MaterialTheme.colorScheme.background,
-                contentColor = MaterialTheme.colorScheme.primary
+            // Un estado guardado de una versión anterior podía apuntar a la
+            // extinta pestaña Carpetas; cualquier valor desconocido cae en Música.
+            val section = if (selectedTab == 1) 1 else 0
+
+            LibraryHeader(
+                isScanning = isScanning,
+                onSearch = onOpenSearch,
+                onSettings = onOpenSettings
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                listOf("Música", "Listas", "Carpetas").forEachIndexed { index, label ->
-                    Tab(
-                        selected = selectedTab == index,
-                        onClick = { onTabSelected(index) },
-                        text = { Text(text = label) }
+                LibrarySectionSelector(
+                    selectedTab = section,
+                    onTabSelected = onTabSelected
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                // El orden solo aplica a la biblioteca de canciones.
+                if (section == 0) {
+                    LibrarySortButton(
+                        settings = librarySortSettings,
+                        onSelect = viewModel::setLibrarySort
                     )
                 }
             }
 
-            // Cambia el contenido según la pestaña seleccionada
-            when (selectedTab) {
+            // Cambia el contenido según la sección seleccionada
+            when (section) {
 
             // PESTAÑA 0: MÚSICA
             0 -> {
-                LibraryHeader(
-                    isScanning = isScanning,
-                    onSearch = onOpenSearch,
-                    onSettings = onOpenSettings
-                )
-
-                LibrarySummary(
-                    songCount = songs.size,
-                    filtersVisible = showFilters,
-                    onToggleFilters = {
-                        showFilters = !showFilters
-                    },
-                    sortSettings = librarySortSettings,
-                    onSortSelect = viewModel::setLibrarySort
-                )
+                LibrarySummary(songCount = songs.size)
                 if (showFilters) {
                     FoldersFilterRow(
                         folders = folders,
@@ -322,21 +319,6 @@ fun HomeScreen(
                             }
                         )
                     }
-                }
-            }
-
-            // PESTAÑA 2: CARPETAS
-            2 -> {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Tus carpetas de música",
-                        style = MaterialTheme.typography.titleLarge
-                    )
                 }
             }
             }
@@ -561,39 +543,79 @@ private fun LibraryHeader(
     }
 }
 
+/**
+ * Selector compacto de sección. La píldora activa usa el acento del tema y la
+ * inactiva queda como texto discreto; los colores se animan al cambiar.
+ */
 @Composable
-private fun LibrarySummary(
-    songCount: Int,
-    filtersVisible: Boolean,
-    onToggleFilters: () -> Unit,
-    sortSettings: LibrarySortSettings,
-    onSortSelect: (LibrarySortField, LibrarySortDirection) -> Unit
+private fun LibrarySectionSelector(
+    selectedTab: Int,
+    onTabSelected: (Int) -> Unit
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = if (songCount == 1) "1 canción" else "$songCount canciones",
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Spacer(modifier = Modifier.weight(1f))
-        LibrarySortButton(settings = sortSettings, onSelect = onSortSelect)
-        Spacer(modifier = Modifier.width(4.dp))
-        IconButton(onClick = onToggleFilters, modifier = Modifier.size(32.dp)) {
-            JexSymbolIcon(
-                symbol = JexSymbol.Filter,
-                contentDescription = if (filtersVisible) "Ocultar filtros" else "Mostrar filtros",
-                tint = if (filtersVisible) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp)
+        listOf("Música", "Listas").forEachIndexed { index, label ->
+            SectionChip(
+                label = label,
+                selected = selectedTab == index,
+                onClick = { onTabSelected(index) }
             )
         }
     }
+}
+
+@Composable
+private fun SectionChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val accent = MaterialTheme.colorScheme.primary
+    val container by animateColorAsState(
+        targetValue = if (selected) accent.copy(alpha = 0.18f) else Color.Transparent,
+        animationSpec = tween(180),
+        label = "sectionChipContainer"
+    )
+    val content by animateColorAsState(
+        targetValue = if (selected) accent
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = tween(180),
+        label = "sectionChipContent"
+    )
+    val border by animateColorAsState(
+        targetValue = if (selected) accent.copy(alpha = 0.55f)
+        else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+        animationSpec = tween(180),
+        label = "sectionChipBorder"
+    )
+
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = container,
+        border = BorderStroke(1.dp, border)
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = content
+        )
+    }
+}
+
+@Composable
+private fun LibrarySummary(songCount: Int) {
+    Text(
+        text = if (songCount == 1) "1 canción" else "$songCount canciones",
+        style = MaterialTheme.typography.bodyMedium,
+        fontWeight = FontWeight.Medium,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+    )
 }
 
 @Composable
