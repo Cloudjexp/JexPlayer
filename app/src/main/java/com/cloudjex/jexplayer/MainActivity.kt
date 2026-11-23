@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cloudjex.jexplayer.ui.home.HomeScreen
+import com.cloudjex.jexplayer.ui.home.SearchScreen
 import com.cloudjex.jexplayer.ui.home.WelcomeScreen
 import com.cloudjex.jexplayer.ui.home.JexUpdateDialog
 import com.cloudjex.jexplayer.ui.home.SettingsScreen
@@ -117,7 +118,10 @@ class MainActivity : ComponentActivity() {
                       var settingsOpen by rememberSaveable { mutableStateOf(false) }
                       var selectedTab by rememberSaveable { mutableStateOf(0) }
                       var appTab by rememberSaveable { mutableStateOf(0) }
-                      var pendingSearchOpen by rememberSaveable { mutableStateOf(false) }
+                      var previousAppTab by rememberSaveable { mutableStateOf(0) }
+                      var selectedFolderUri by rememberSaveable {
+                          mutableStateOf<String?>(null)
+                      }
                       var pendingOpenFavorites by rememberSaveable { mutableStateOf(false) }
                       var floatingContentHeightPx by remember { mutableStateOf(0) }
                       val bottomContentPadding = with(LocalDensity.current) {
@@ -194,6 +198,13 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    // La búsqueda es un destino propio. Recordar de dónde se
+                    // abrió permite que atrás devuelva al usuario a su pestaña.
+                    val openSearch = {
+                        if (appTab != 1) previousAppTab = appTab
+                        appTab = 1
+                    }
+
                     // Con destinos de aplicación, atrás vuelve a Inicio antes de
                     // salir. Nunca compite con el reproductor ni con ajustes.
                     BackHandler(
@@ -201,7 +212,7 @@ class MainActivity : ComponentActivity() {
                             restoredScreen != true &&
                             appTab != 0
                     ) {
-                        appTab = 0
+                        appTab = if (appTab == 1) previousAppTab else 0
                     }
 
                     val transitionOffsetPx = with(LocalDensity.current) { 20.dp.roundToPx() }
@@ -267,16 +278,17 @@ class MainActivity : ComponentActivity() {
                                     } else {
                                         Box(modifier = Modifier.fillMaxSize()) {
                                             appStateHolder.SaveableStateProvider(
-                                                if (appTab == 0) "inicio" else "biblioteca"
+                                                when (appTab) {
+                                                    0 -> "inicio"
+                                                    1 -> "buscar"
+                                                    else -> "biblioteca"
+                                                }
                                             ) {
-                                                if (appTab == 0) {
-                                                    DashboardScreen(
+                                                when (appTab) {
+                                                    0 -> DashboardScreen(
                                                         viewModel = vm,
                                                         bottomContentPadding = bottomContentPadding,
-                                                        onOpenSearch = {
-                                                            appTab = 1
-                                                            pendingSearchOpen = true
-                                                        },
+                                                        onOpenSearch = openSearch,
                                                         onOpenSettings = { settingsOpen = true },
                                                         onOpenFavorites = {
                                                             selectedTab = 1
@@ -284,8 +296,17 @@ class MainActivity : ComponentActivity() {
                                                             pendingOpenFavorites = true
                                                         }
                                                     )
-                                                } else {
-                                                    HomeScreen(
+
+                                                    1 -> SearchScreen(
+                                                        viewModel = vm,
+                                                        selectedFolderUri = selectedFolderUri,
+                                                        bottomContentPadding = bottomContentPadding,
+                                                        onExit = {
+                                                            appTab = previousAppTab
+                                                        }
+                                                    )
+
+                                                    else -> HomeScreen(
                                                         viewModel = vm,
                                                         selectedTab = selectedTab,
                                                         onTabSelected = { selectedTab = it },
@@ -298,12 +319,10 @@ class MainActivity : ComponentActivity() {
                                                         },
                                                         onOpenSettings = { settingsOpen = true },
                                                         bottomContentPadding = bottomContentPadding,
-                                                        pendingSearchOpen = pendingSearchOpen,
-                                                        onSearchOpenHandled = {
-                                                            pendingSearchOpen = false
-                                                        },
-                                                        onSearchClosed = {
-                                                            if (appTab == 1) appTab = 2
+                                                        onOpenSearch = openSearch,
+                                                        selectedFolderUri = selectedFolderUri,
+                                                        onFolderSelected = {
+                                                            selectedFolderUri = it
                                                         },
                                                         pendingOpenFavorites = pendingOpenFavorites,
                                                         onOpenFavoritesHandled = {
@@ -330,8 +349,8 @@ class MainActivity : ComponentActivity() {
                                                     items = APP_BOTTOM_BAR_ITEMS,
                                                     selectedTab = appTab,
                                                     onTabSelected = { tab ->
-                                                        if (tab == 1) pendingSearchOpen = true
-                                                        appTab = tab
+                                                        if (tab == 1) openSearch()
+                                                        else appTab = tab
                                                     }
                                                 )
                                             }
