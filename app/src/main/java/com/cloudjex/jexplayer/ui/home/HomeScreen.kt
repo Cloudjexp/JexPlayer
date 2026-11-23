@@ -64,6 +64,8 @@ import com.cloudjex.jexplayer.data.artwork.ArtworkRepository
 import com.cloudjex.jexplayer.data.local.AlbumArtStore
 import com.cloudjex.jexplayer.data.model.MusicFolder
 import com.cloudjex.jexplayer.data.model.Song
+import com.cloudjex.jexplayer.data.model.LibrarySortField
+import com.cloudjex.jexplayer.data.model.LibrarySortDirection
 import com.cloudjex.jexplayer.data.model.LibrarySortSettings
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 import com.cloudjex.jexplayer.viewmodel.RepeatMode
@@ -111,7 +113,6 @@ fun HomeScreen(
     }
     var selectedLibraryId by rememberSaveable { mutableStateOf<String?>(null) }
     var libraryDialogSongId by rememberSaveable { mutableStateOf<String?>(null) }
-    var showSortDialog by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(customLibraries, customLibrariesReady, selectedLibraryId) {
         if (customLibrariesReady &&
@@ -202,7 +203,7 @@ fun HomeScreen(
                         showFilters = !showFilters
                     },
                     sortSettings = librarySortSettings,
-                    onSort = { showSortDialog = true }
+                    onSortSelect = viewModel::setLibrarySort
                 )
                 if (showFilters) {
                     FoldersFilterRow(
@@ -356,13 +357,6 @@ fun HomeScreen(
             }
         }
 
-        if (showSortDialog) {
-            LibrarySortDialog(
-                settings = librarySortSettings,
-                onSelect = viewModel::setLibrarySort,
-                onDismiss = { showSortDialog = false }
-            )
-        }
     }
 
 }
@@ -573,7 +567,7 @@ private fun LibrarySummary(
     filtersVisible: Boolean,
     onToggleFilters: () -> Unit,
     sortSettings: LibrarySortSettings,
-    onSort: () -> Unit
+    onSortSelect: (LibrarySortField, LibrarySortDirection) -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -588,7 +582,7 @@ private fun LibrarySummary(
             color = MaterialTheme.colorScheme.onSurface
         )
         Spacer(modifier = Modifier.weight(1f))
-        LibrarySortButton(settings = sortSettings, onClick = onSort)
+        LibrarySortButton(settings = sortSettings, onSelect = onSortSelect)
         Spacer(modifier = Modifier.width(4.dp))
         IconButton(onClick = onToggleFilters, modifier = Modifier.size(32.dp)) {
             JexSymbolIcon(
