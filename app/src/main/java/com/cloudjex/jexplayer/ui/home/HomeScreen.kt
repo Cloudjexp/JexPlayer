@@ -23,7 +23,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
@@ -35,11 +34,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -53,7 +47,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -94,9 +87,9 @@ fun HomeScreen(
     onPendingFollowHandled: (String) -> Unit = {},
     onOpenSettings: () -> Unit,
     bottomContentPadding: Dp = 0.dp,
-    pendingSearchOpen: Boolean = false,
-    onSearchOpenHandled: () -> Unit = {},
-    onSearchClosed: () -> Unit = {},
+    onOpenSearch: () -> Unit = {},
+    selectedFolderUri: String? = null,
+    onFolderSelected: (String?) -> Unit = {},
     pendingOpenFavorites: Boolean = false,
     onOpenFavoritesHandled: () -> Unit = {}
 ) {
@@ -112,15 +105,12 @@ fun HomeScreen(
     val libraryMessage by viewModel.libraryMessage.collectAsState()
     val librarySortSettings by viewModel.librarySortSettings.collectAsState()
 
-    var searchQuery by rememberSaveable { mutableStateOf("") }
-    var isSearchVisible by rememberSaveable { mutableStateOf(false) }
     var showFilters by rememberSaveable { mutableStateOf(false) }
     var showFavoritesPlaylist by rememberSaveable {
         mutableStateOf(false)
     }
     var selectedLibraryId by rememberSaveable { mutableStateOf<String?>(null) }
     var libraryDialogSongId by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedFolderUri by rememberSaveable { mutableStateOf<String?>(null) }
     var showSortDialog by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(customLibraries, customLibrariesReady, selectedLibraryId) {
@@ -137,14 +127,6 @@ fun HomeScreen(
             songs.none { it.id == libraryDialogSongId }
         ) {
             libraryDialogSongId = null
-        }
-    }
-
-    LaunchedEffect(pendingSearchOpen) {
-        if (pendingSearchOpen) {
-            onTabSelected(0)
-            isSearchVisible = true
-            onSearchOpenHandled()
         }
     }
 
@@ -169,12 +151,9 @@ fun HomeScreen(
 
     // Estas proyecciones no dependen del progreso. Al recordarlas, una actualización
     // del reproductor no recorre una biblioteca de miles de entradas.
-    val filteredSongs = remember(songs, searchQuery, selectedFolderUri) {
+    val filteredSongs = remember(songs, selectedFolderUri) {
         songs.filter { song ->
-            (selectedFolderUri == null || song.id.startsWith("${selectedFolderUri}/")) &&
-                    (song.title.contains(searchQuery, ignoreCase = true) ||
-                    song.artist.contains(searchQuery, ignoreCase = true) ||
-                    song.album.contains(searchQuery, ignoreCase = true))
+            selectedFolderUri == null || song.id.startsWith("${selectedFolderUri}/")
         }
     }
     val favoriteSongs = remember(songs, favoriteIds) {
@@ -212,30 +191,9 @@ fun HomeScreen(
             0 -> {
                 LibraryHeader(
                     isScanning = isScanning,
-                    isSearchVisible = isSearchVisible,
-                    onSearch = { isSearchVisible = true },
+                    onSearch = onOpenSearch,
                     onSettings = onOpenSettings
                 )
-
-                AnimatedVisibility(
-                    visible = isSearchVisible,
-                    enter = fadeIn() + expandHorizontally(
-                        expandFrom = Alignment.End
-                    ),
-                    exit = fadeOut() + shrinkHorizontally(
-                        shrinkTowards = Alignment.End
-                    )
-                ) {
-                    SearchField(
-                        query = searchQuery,
-                        onQueryChange = { searchQuery = it },
-                        onClose = {
-                            searchQuery = ""
-                            isSearchVisible = false
-                            onSearchClosed()
-                        }
-                    )
-                }
 
                 LibrarySummary(
                     songCount = songs.size,
@@ -251,9 +209,7 @@ fun HomeScreen(
                         folders = folders,
                         revokedFolderUris = revokedFolderUris,
                         selectedFolderUri = selectedFolderUri,
-                        onFolderSelected = {
-                            selectedFolderUri = it
-                        }
+                        onFolderSelected = onFolderSelected
                     )
                 }
 
@@ -278,8 +234,7 @@ fun HomeScreen(
                     ) {
                         EmptyLibrary(
                             message = when {
-                                searchQuery.isNotBlank() ||
-                                        selectedFolderUri != null ->
+                                selectedFolderUri != null ->
                                     "No se encontraron canciones con estos filtros."
 
                                 isScanning ->
@@ -559,7 +514,6 @@ private fun LibrarySongList(
 @Composable
 private fun LibraryHeader(
     isScanning: Boolean,
-    isSearchVisible: Boolean,
     onSearch: () -> Unit,
     onSettings: () -> Unit
 ) {
@@ -585,18 +539,12 @@ private fun LibraryHeader(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        AnimatedVisibility(
-            visible = !isSearchVisible,
-            enter = fadeIn(),
-            exit = fadeOut()
-        ) {
-            IconButton(onClick = onSearch) {
-                JexSymbolIcon(
-                    symbol = JexSymbol.Search,
-                    contentDescription = "Buscar canciones",
-                    tint = MaterialTheme.colorScheme.onSurface
-                )
-            }
+        IconButton(onClick = onSearch) {
+            JexSymbolIcon(
+                symbol = JexSymbol.Search,
+                contentDescription = "Buscar canciones",
+                tint = MaterialTheme.colorScheme.onSurface
+            )
         }
 
         IconButton(onClick = onSettings) {
@@ -616,56 +564,6 @@ private fun LibraryHeader(
             color = MaterialTheme.colorScheme.primary,
             trackColor = MaterialTheme.colorScheme.surfaceVariant
         )
-    }
-}
-
-@Composable
-private fun SearchField(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onClose: () -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            BasicTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    color = MaterialTheme.colorScheme.onSurface
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                modifier = Modifier.weight(1f),
-                decorationBox = { innerTextField ->
-                    if (query.isEmpty()) {
-                        Text(
-                            text = "Buscar canciones…",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    innerTextField()
-                }
-            )
-            IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
-                JexSymbolIcon(
-                    symbol = JexSymbol.Close,
-                    contentDescription = "Cerrar búsqueda",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
     }
 }
 
