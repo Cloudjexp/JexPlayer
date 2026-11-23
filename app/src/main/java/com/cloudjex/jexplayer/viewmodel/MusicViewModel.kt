@@ -24,7 +24,11 @@ import com.cloudjex.jexplayer.data.local.CustomLibrariesStore
 import com.cloudjex.jexplayer.data.local.LibrarySortPreferenceStore
 import com.cloudjex.jexplayer.data.local.LibraryCache
 import com.cloudjex.jexplayer.data.local.LastSongStore
+import com.cloudjex.jexplayer.data.local.ListeningChunk
+import com.cloudjex.jexplayer.data.local.ListeningTracker
 import com.cloudjex.jexplayer.data.local.PlaybackHistoryStore
+import com.cloudjex.jexplayer.data.local.PlaybackStatsStore
+import com.cloudjex.jexplayer.data.local.ScrobbleRule
 import com.cloudjex.jexplayer.data.local.LyricsSettingsStore
 import com.cloudjex.jexplayer.data.local.ScreenPreferenceStore
 import com.cloudjex.jexplayer.data.lyrics.LyricsDocument
@@ -100,6 +104,12 @@ private const val UPDATE_APK_PREFIX = "JexPlayer-update-"
 private const val PROGRESS_STEP_BYTES = 256L * 1024
 private const val MAX_REDIRECTS = 5
 
+/** Cada 10 s se vuelca el tiempo escuchado acumulado al almacén de estadísticas. */
+private const val LISTENING_FLUSH_INTERVAL_MS = 10_000L
+
+/** Ventana para no contar dos veces el inicio de una canción (playSong + Media3). */
+private const val PLAY_DEDUPE_WINDOW_MS = 2_000L
+
 
 
 enum class RepeatMode {
@@ -139,6 +149,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val customLibrariesSaveMutex = Mutex()
     private val lastSongStore = LastSongStore(appContext)
     private val playbackHistoryStore = PlaybackHistoryStore.from(appContext)
+    private val playbackStatsStore = PlaybackStatsStore.from(appContext)
+    private val listeningTracker = ListeningTracker()
+
+    /** Inicio ya contado por [playSong]; Media3 emitirá el mismo cambio después. */
+    private var pendingStatsPlay: Pair<String, Long>? = null
+
+    /**
+     * Reproducción pendiente de contar. Solo se confirma cuando se han escuchado
+     * la mitad de la canción o 4 minutos (lo que antes), como en last.fm.
+     */
+    private data class PendingScrobble(val songId: String, val thresholdMs: Long)
+    private var pendingScrobble: PendingScrobble? = null
+
     private val restoredLastSong = lastSongStore.load()
     private var scanJob: Job? = null
     private var downloadJob: Job? = null
@@ -182,6 +205,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
+            if (!isPlaying) {
+                maybeCommitScrobble()
+                flushListening(listeningTracker.take())
+            }
         }
 
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
@@ -190,6 +217,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             val songId = mediaItem?.mediaId ?: return
+            flushListening(listeningTracker.switchTo(songId, 0L))
             _currentSongId.value = songId
             _currentPosition.value = 0L
             (activeQueueSongs().find { it.id == songId }
@@ -197,8 +225,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 ?: mediaItem?.toSongFallback())?.let { song ->
                 _restoredSong.value = song
                 lastSongStore.save(song, 0L)
-                recordPlaybackHistory(song.id)
                 _duration.value = song.duration
+                registerPlayStart(song.id, song.duration)
                 // Los tags se cargan solos en cada cambio de canción, así están
                 // disponibles en cualquier pantalla sin que la UI lo pida.
                 cargarAudioTags(song)
@@ -263,6 +291,46 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val libraryStats: StateFlow<LibraryStats?> =
         combine(songEntries, _isLibraryInitialized) { entries, initialized ->
             if (initialized) libraryStatsFor(entries) else null
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * Rankings semanales e históricos. Se derivan del registro propio de
+     * estadísticas; mientras la biblioteca se restaura se publica `null` para
+     * no mostrar listas vacías engañosas.
+     */
+    val dashboardRankings: StateFlow<DashboardRankings?> =
+        combine(
+            playbackStatsStore.snapshot,
+            songEntries,
+            _isLibraryInitialized
+        ) { snapshot, entries, initialized ->
+            if (initialized) rankingsFor(snapshot, entries) else null
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Listas completas (incluidas las de 0 escuchas) para el detalle de estadísticas. */
+    val fullDashboardRankings: StateFlow<FullDashboardRankings?> =
+        combine(
+            playbackStatsStore.snapshot,
+            songEntries,
+            _isLibraryInitialized
+        ) { snapshot, entries, initialized ->
+            if (initialized) fullRankingsFor(snapshot, entries) else null
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Días, géneros y ánimo estimado para cada periodo del panel. */
+    val listeningInsights: StateFlow<AllListeningInsights?> =
+        combine(
+            playbackStatsStore.snapshot,
+            songEntries,
+            _isLibraryInitialized
+        ) { snapshot, entries, initialized ->
+            if (initialized) allListeningInsights(snapshot, entries) else null
         }
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -405,9 +473,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Lectura única del historial fuera del hilo principal; la UI se
-        // suscribe cuando el panel se compone.
+        // Lectura única del historial y de las estadísticas fuera del hilo
+        // principal; la UI se suscribe cuando el panel se compone.
         viewModelScope.launch { playbackHistoryStore.load() }
+        viewModelScope.launch { playbackStatsStore.load() }
 
         controllerFuture.addListener(
             {
@@ -724,6 +793,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         controller.currentMediaItem?.mediaId?.let { songId ->
             playbackRestored = true
             _currentSongId.value = songId
+            // La sesión ya venía reproduciendo: no contamos una reproducción
+            // nueva, solo tomamos la posición como referencia del medidor.
+            flushListening(
+                listeningTracker.switchTo(songId, controller.currentPosition.coerceAtLeast(0L))
+            )
             (_songs.value.find { it.id == songId }
                 ?: controller.currentMediaItem?.toSongFallback())?.let { song ->
                 _restoredSong.value = song
@@ -828,6 +902,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         controller.pause()
         playbackRestored = true
         _currentSongId.value = saved.song.id
+        listeningTracker.switchTo(saved.song.id, saved.position)
         _restoredSong.value = songs[targetIndex]
         _currentPosition.value = saved.position
         _duration.value = songs[targetIndex].duration
@@ -1581,8 +1656,62 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun recordPlaybackHistory(songId: String) {
+    /**
+     * Registra el inicio en el historial y prepara la estadística pendiente.
+     * El historial sigue reflejando lo que el usuario pulsa; la estadística solo
+     * cuenta la reproducción cuando se cumple la regla de last.fm.
+     *
+     * `playSong` avisa en cuanto el usuario pulsa y Media3 emite después
+     * `onMediaItemTransition` con la misma canción. La ventana de deduplicación
+     * evita preparar dos veces ese único inicio sin perder las transiciones
+     * automáticas (siguiente canción, cola del servicio, etc.).
+     */
+    private fun registerPlayStart(songId: String, durationMs: Long) {
+        if (songId.isBlank()) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val pending = pendingStatsPlay
+        pendingStatsPlay = null
+        if (pending?.first == songId && now - pending.second <= PLAY_DEDUPE_WINDOW_MS) {
+            return
+        }
+        pendingStatsPlay = songId to now
+        val duration = durationMs.takeIf { it > 0L } ?: _duration.value
+        pendingScrobble = ScrobbleRule.thresholdFor(duration)?.let { threshold ->
+            PendingScrobble(songId, threshold)
+        }
+        flushListening(listeningTracker.switchTo(songId, 0L))
         viewModelScope.launch { playbackHistoryStore.record(songId) }
+    }
+
+    /**
+     * Confirma una sola reproducción cuando se ha escuchado lo suficiente.
+     * Se llama al muestrear el reproductor, al pausar y al terminar la canción.
+     */
+    private fun maybeCommitScrobble() {
+        val pending = pendingScrobble ?: return
+        val listenedMs = listeningTracker.currentSongListenedMs()
+        if (listenedMs < pending.thresholdMs) return
+        pendingScrobble = null
+        // El tiempo escuchado antes del umbral no tenía muestra donde apoyarse:
+        // se vuelve a meter junto con el contador para no perderlo.
+        listeningTracker.take()
+        viewModelScope.launch {
+            playbackStatsStore.recordPlay(pending.songId)
+            playbackStatsStore.addListening(pending.songId, listenedMs)
+        }
+    }
+
+    private fun flushListening(chunk: ListeningChunk?) {
+        if (chunk == null || chunk.listenedMs <= 0L) return
+        viewModelScope.launch { playbackStatsStore.addListening(chunk.songId, chunk.listenedMs) }
+    }
+
+    /** Volcado final: `viewModelScope` puede estar ya cancelado en `onCleared`. */
+    private fun flushListeningNow() {
+        val chunk = listeningTracker.take() ?: return
+        runBlocking(Dispatchers.IO) {
+            playbackStatsStore.addListening(chunk.songId, chunk.listenedMs)
+        }
     }
 
     /**
@@ -1609,7 +1738,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _currentPosition.value = 0L
         _duration.value = song.duration
         lastSongStore.save(song, 0L)
-        recordPlaybackHistory(song.id)
+        registerPlayStart(song.id, song.duration)
         playbackRestored = true
         cargarAudioTags(song)
 
@@ -1858,6 +1987,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
      * Repeat ONE lo maneja ExoPlayer de forma nativa (REPEAT_MODE_ONE).
      */
     private fun onSongCompleted() {
+        maybeCommitScrobble()
         if (_repeatMode.value == RepeatMode.ONE) return
 
         // La cola de Media3 es la fuente de verdad. No se vuelve a construir
@@ -1876,6 +2006,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun seekTo(position: Long) {
         _currentPosition.value = position
+        listeningTracker.onSeek(position)
         _restoredSong.value?.let { lastSongStore.save(it, position) }
         runOnController { controller ->
             controller.seekTo(position)
@@ -1895,11 +2026,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             while (true) {
                 controller?.let { controller ->
                     if (controller.isPlaying) {
-                        _currentPosition.value = controller.currentPosition
+                        val position = controller.currentPosition.coerceAtLeast(0L)
+                        _currentPosition.value = position
                         _duration.value = controller.duration.coerceAtLeast(0L)
                         _restoredSong.value?.let {
-                            lastSongStore.save(it, _currentPosition.value)
+                            lastSongStore.save(it, position)
                         }
+                        listeningTracker.onSample(_currentSongId.value, position, true)
+                        maybeCommitScrobble()
+                        val pending = listeningTracker.peek()
+                        if (pending != null && pending.listenedMs >= LISTENING_FLUSH_INTERVAL_MS) {
+                            flushListening(listeningTracker.take())
+                        }
+                    } else {
+                        flushListening(listeningTracker.take())
                     }
                 }
 
@@ -1911,6 +2051,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         scanJob?.cancel()
+        runCatching { flushListeningNow() }
         controller?.removeListener(playerListener)
         controller = null
         pendingAction = null
