@@ -211,13 +211,17 @@ internal fun PlayerScreen(
                         dismissState = dismissState,
                         morphReady = morphReady,
                         onArtworkBounds = { bounds ->
-                            // Solo interesa la recta en reposo: con la lista
-                            // desplazada o el panel en movimiento sería otra.
-                            if (dismissState.offsetPx == 0f &&
-                                contentScrollState.value == 0 &&
-                                artworkBounds != bounds
-                            ) {
-                                artworkBounds = bounds
+                            // La recta que interesa es la de reposo. Si el panel
+                            // está desplazado (apertura o arrastre) se compensa la
+                            // traslación, y con la lista desplazada se ignora.
+                            if (contentScrollState.value == 0) {
+                                val rest = bounds.translate(
+                                    translateX = 0f,
+                                    translateY = -dismissState.offsetPx
+                                )
+                                if (artworkBounds != rest) {
+                                    artworkBounds = rest
+                                }
                             }
                         },
                         song = currentSong,

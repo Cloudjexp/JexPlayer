@@ -2,6 +2,7 @@ package com.cloudjex.jexplayer
 
 import android.os.Bundle
 import android.graphics.Color as AndroidColor
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.SystemBarStyle
@@ -40,13 +41,17 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
@@ -64,7 +69,10 @@ import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.navigation.JexBottomBar
 import com.cloudjex.jexplayer.ui.navigation.JexBottomBarItem
 import com.cloudjex.jexplayer.ui.player.PlayerScreen
+import com.cloudjex.jexplayer.ui.player.PLAYER_BACKDROP_BLUR_DP
+import com.cloudjex.jexplayer.ui.player.PLAYER_BACKDROP_MAX_SCRIM
 import com.cloudjex.jexplayer.ui.player.miniPlayerAlpha
+import com.cloudjex.jexplayer.ui.player.playerBackdropEffect
 import com.cloudjex.jexplayer.ui.player.playerDismissProgress
 import com.cloudjex.jexplayer.ui.player.rememberPlayerDismissState
 import com.cloudjex.jexplayer.ui.theme.JexPlayerTheme
@@ -287,6 +295,34 @@ class MainActivity : ComponentActivity() {
                                     Box(
                                         modifier = Modifier
                                             .fillMaxSize()
+                                            // El reproductor mide lo mismo que este
+                                            // contenido: así la apertura conoce la altura
+                                            // antes de que el panel exista.
+                                            .onSizeChanged {
+                                                playerDismissState.heightPx = it.height
+                                            }
+                                            // Desenfoque progresivo del fondo. Va en
+                                            // la capa (no en composición) para no
+                                            // recomponer por frame; en API < 31 el
+                                            // efecto se ignora y queda el scrim.
+                                            .graphicsLayer {
+                                                val effect = playerBackdropEffect(
+                                                    playerDismissProgress(
+                                                        playerDismissState.offsetPx,
+                                                        playerDismissState.heightPx
+                                                    )
+                                                )
+                                                renderEffect =
+                                                    if (Build.VERSION.SDK_INT >=
+                                                        Build.VERSION_CODES.S && effect > 0.01f
+                                                    ) {
+                                                        val radius =
+                                                            PLAYER_BACKDROP_BLUR_DP.dp.toPx() * effect
+                                                        BlurEffect(radius, radius)
+                                                    } else {
+                                                        null
+                                                    }
+                                            }
                                             // Con el reproductor encima, el fondo no debe
                                             // recibir toques ni gestos: consumimos todo en
                                             // la pasada Initial, antes de que el pager, la
@@ -407,7 +443,7 @@ class MainActivity : ComponentActivity() {
                                                     songs = songs,
                                                     viewModel = vm,
                                                     onOpenPlayer = {
-                                                        playerDismissState.reset()
+                                                        playerDismissState.open()
                                                         vm.setShowPlayer(true)
                                                     },
                                                     onArtworkPositioned = { bounds ->
@@ -426,6 +462,28 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             )
                                         }
+                                    }
+
+                                    // Scrim por encima del fondo (y del mini, que a
+                                    // esa altura aún es invisible) y por debajo del
+                                    // reproductor: oscurece lo que se va revelando.
+                                    if (restoredScreen == true) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .drawBehind {
+                                                    drawRect(
+                                                        color = Color.Black,
+                                                        alpha = PLAYER_BACKDROP_MAX_SCRIM *
+                                                            playerBackdropEffect(
+                                                                playerDismissProgress(
+                                                                    playerDismissState.offsetPx,
+                                                                    playerDismissState.heightPx
+                                                                )
+                                                            )
+                                                    )
+                                                }
+                                        )
                                     }
 
                                     // Superpuesto, no intercambiado: el cierre
