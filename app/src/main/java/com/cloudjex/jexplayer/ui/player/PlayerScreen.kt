@@ -8,7 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.MarqueeAnimationMode
@@ -413,12 +413,12 @@ private fun InteractiveWaveform(
                     }
                 }
                 .pointerInput(sliderMax) {
-                    detectDragGestures(
+                    detectHorizontalDragGestures(
                         onDragStart = { offset ->
                             isDragging = true
                             draggedFraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
                         },
-                        onDrag = { change, _ ->
+                        onHorizontalDrag = { change, _ ->
                             change.consume()
                             draggedFraction =
                                 (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)

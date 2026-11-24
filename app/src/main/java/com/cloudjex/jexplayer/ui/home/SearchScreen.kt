@@ -59,6 +59,7 @@ fun SearchScreen(
     viewModel: MusicViewModel,
     selectedFolderUri: String?,
     bottomContentPadding: Dp,
+    isActive: Boolean = true,
     onExit: () -> Unit
 ) {
     val songs by viewModel.songs.collectAsState()
@@ -66,6 +67,14 @@ fun SearchScreen(
     val customLibraries by viewModel.customLibraries.collectAsState()
     val customLibrariesReady by viewModel.customLibrariesReady.collectAsState()
     val currentSongId by viewModel.currentSongId.collectAsState()
+    val focusManager = LocalFocusManager.current
+
+    // El pager compone esta página durante el arrastre, antes de que se vea: el
+    // foco solo se pide cuando Buscar está asentada, y se suelta al salir para
+    // que el teclado no siga abierto sobre otra sección.
+    LaunchedEffect(isActive) {
+        if (!isActive) focusManager.clearFocus()
+    }
 
     var query by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(""))
@@ -122,7 +131,8 @@ fun SearchScreen(
             SearchField(
                 value = query,
                 onValueChange = { query = it },
-                onClear = { query = TextFieldValue("") }
+                onClear = { query = TextFieldValue("") },
+                isActive = isActive
             )
         }
 
@@ -192,16 +202,18 @@ fun SearchScreen(
 private fun SearchField(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    isActive: Boolean
 ) {
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     var didRequestFocus by rememberSaveable { mutableStateOf(false) }
 
     // Solo la primera apertura muestra el teclado: al volver a la pestaña o
-    // cerrar el reproductor el campo se restaura sin robar el foco.
-    LaunchedEffect(Unit) {
-        if (!didRequestFocus) {
+    // cerrar el reproductor el campo se restaura sin robar el foco. Con el
+    // pager hay que esperar además a que la página esté asentada.
+    LaunchedEffect(isActive) {
+        if (isActive && !didRequestFocus) {
             focusRequester.requestFocus()
             didRequestFocus = true
         }

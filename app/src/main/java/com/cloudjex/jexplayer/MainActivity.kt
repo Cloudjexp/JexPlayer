@@ -35,6 +35,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.Lifecycle
@@ -123,6 +125,12 @@ class MainActivity : ComponentActivity() {
                           mutableStateOf<String?>(null)
                       }
                       var pendingOpenFavorites by rememberSaveable { mutableStateOf(false) }
+                      // El gesto horizontal y `appTab` son la misma intención en dos
+                      // sitios: la barra, el back y el estado guardado escriben aquí,
+                      // el pager solo lo refleja al asentarse.
+                      val appPagerState = rememberPagerState(initialPage = appTab) {
+                          APP_PAGE_KEYS.size
+                      }
                       var floatingContentHeightPx by remember { mutableStateOf(0) }
                       val bottomContentPadding = with(LocalDensity.current) {
                           floatingContentHeightPx.toDp()
@@ -205,6 +213,35 @@ class MainActivity : ComponentActivity() {
                         appTab = 1
                     }
 
+                    // `settledPage` no cambia mientras el pager se mueve (ni con el
+                    // dedo ni animando): así un salto de dos páginas no escribe la
+                    // intermedia, y no se cancela la animación que lo lleva a la
+                    // destino. Solo se actualiza al asentarse.
+                    LaunchedEffect(appPagerState) {
+                        snapshotFlow { appPagerState.settledPage }
+                            .distinctUntilChanged()
+                            .collect { page ->
+                                if (page == appTab) return@collect
+                                // Mismo criterio que openSearch: atrás devuelve al
+                                // usuario a la sección desde la que llegó.
+                                if (page == 1) previousAppTab = appTab
+                                appTab = page
+                            }
+                    }
+
+                    // Botones, "Abrir favoritos" y el estado guardado mueven el
+                    // pager; el gesto ya lo movió por su cuenta.
+                    LaunchedEffect(appTab) {
+                        if (appPagerState.currentPage != appTab) {
+                            appPagerState.animateScrollToPage(appTab)
+                        }
+                    }
+
+                    // Buscar se compone durante el arrastre, antes de ser visible:
+                    // no debe pedir foco (ni abrir el teclado) hasta estar asentada.
+                    val searchActive = !appPagerState.isScrollInProgress &&
+                        appPagerState.settledPage == 1
+
                     // Con destinos de aplicación, atrás vuelve a Inicio antes de
                     // salir. Nunca compite con el reproductor ni con ajustes.
                     BackHandler(
@@ -277,58 +314,65 @@ class MainActivity : ComponentActivity() {
                                         )
                                     } else {
                                         Box(modifier = Modifier.fillMaxSize()) {
-                                            appStateHolder.SaveableStateProvider(
-                                                when (appTab) {
-                                                    0 -> "inicio"
-                                                    1 -> "buscar"
-                                                    else -> "biblioteca"
-                                                }
-                                            ) {
-                                                when (appTab) {
-                                                    0 -> DashboardScreen(
-                                                        viewModel = vm,
-                                                        bottomContentPadding = bottomContentPadding,
-                                                        onOpenSearch = openSearch,
-                                                        onOpenSettings = { settingsOpen = true },
-                                                        onOpenFavorites = {
-                                                            selectedTab = 1
-                                                            appTab = 2
-                                                            pendingOpenFavorites = true
-                                                        }
-                                                    )
-
-                                                    1 -> SearchScreen(
-                                                        viewModel = vm,
-                                                        selectedFolderUri = selectedFolderUri,
-                                                        bottomContentPadding = bottomContentPadding,
-                                                        onExit = {
-                                                            appTab = previousAppTab
-                                                        }
-                                                    )
-
-                                                    else -> HomeScreen(
-                                                        viewModel = vm,
-                                                        selectedTab = selectedTab,
-                                                        onTabSelected = { selectedTab = it },
-                                                        listState = libraryListState,
-                                                        pendingFollowId = pendingLibraryFollowId,
-                                                        onPendingFollowHandled = { songId ->
-                                                            if (pendingLibraryFollowId == songId) {
-                                                                pendingLibraryFollowId = null
+                                            // Un pager, no un `when`: el gesto sigue al
+                                            // dedo y los extremos (Inicio/Biblioteca) se
+                                            // detienen solos. appTab sigue mandando en la
+                                            // barra, el back y el estado guardado.
+                                            HorizontalPager(
+                                                state = appPagerState,
+                                                modifier = Modifier.fillMaxSize(),
+                                                key = { page -> APP_PAGE_KEYS[page] }
+                                            ) { page ->
+                                                appStateHolder.SaveableStateProvider(
+                                                    APP_PAGE_KEYS[page]
+                                                ) {
+                                                    when (page) {
+                                                        0 -> DashboardScreen(
+                                                            viewModel = vm,
+                                                            bottomContentPadding = bottomContentPadding,
+                                                            onOpenSearch = openSearch,
+                                                            onOpenSettings = { settingsOpen = true },
+                                                            onOpenFavorites = {
+                                                                selectedTab = 1
+                                                                appTab = 2
+                                                                pendingOpenFavorites = true
                                                             }
-                                                        },
-                                                        onOpenSettings = { settingsOpen = true },
-                                                        bottomContentPadding = bottomContentPadding,
-                                                        onOpenSearch = openSearch,
-                                                        selectedFolderUri = selectedFolderUri,
-                                                        onFolderSelected = {
-                                                            selectedFolderUri = it
-                                                        },
-                                                        pendingOpenFavorites = pendingOpenFavorites,
-                                                        onOpenFavoritesHandled = {
-                                                            pendingOpenFavorites = false
-                                                        }
-                                                    )
+                                                        )
+
+                                                        1 -> SearchScreen(
+                                                            viewModel = vm,
+                                                            selectedFolderUri = selectedFolderUri,
+                                                            bottomContentPadding = bottomContentPadding,
+                                                            isActive = searchActive,
+                                                            onExit = {
+                                                                appTab = previousAppTab
+                                                            }
+                                                        )
+
+                                                        else -> HomeScreen(
+                                                            viewModel = vm,
+                                                            selectedTab = selectedTab,
+                                                            onTabSelected = { selectedTab = it },
+                                                            listState = libraryListState,
+                                                            pendingFollowId = pendingLibraryFollowId,
+                                                            onPendingFollowHandled = { songId ->
+                                                                if (pendingLibraryFollowId == songId) {
+                                                                    pendingLibraryFollowId = null
+                                                                }
+                                                            },
+                                                            onOpenSettings = { settingsOpen = true },
+                                                            bottomContentPadding = bottomContentPadding,
+                                                            onOpenSearch = openSearch,
+                                                            selectedFolderUri = selectedFolderUri,
+                                                            onFolderSelected = {
+                                                                selectedFolderUri = it
+                                                            },
+                                                            pendingOpenFavorites = pendingOpenFavorites,
+                                                            onOpenFavoritesHandled = {
+                                                                pendingOpenFavorites = false
+                                                            }
+                                                        )
+                                                    }
                                                 }
                                             }
 
@@ -393,3 +437,6 @@ private val APP_BOTTOM_BAR_ITEMS = listOf(
     JexBottomBarItem(icon = JexSymbol.Search, label = "Buscar"),
     JexBottomBarItem(icon = JexSymbol.LibraryMusic, label = "Biblioteca")
 )
+
+/** Claves del SaveableStateHolder, una por página del pager y en su mismo orden. */
+private val APP_PAGE_KEYS = listOf("inicio", "buscar", "biblioteca")
