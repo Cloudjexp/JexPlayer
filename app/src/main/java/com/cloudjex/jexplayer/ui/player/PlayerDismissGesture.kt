@@ -1,5 +1,6 @@
 package com.cloudjex.jexplayer.ui.player
 
+import androidx.compose.animation.core.EaseInOutCubic
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
@@ -30,7 +31,10 @@ internal const val PLAYER_DISMISS_DISTANCE_FRACTION = 0.25f
 /** Velocidad hacia abajo, en dp/s, que cierra el reproductor al soltar. */
 internal const val PLAYER_DISMISS_VELOCITY_DP_PER_SEC = 1_000f
 
-private const val CLOSE_ANIMATION_MS = 200
+private const val CLOSE_ANIMATION_MS = 300
+
+/** La apertura va más pausada: es la transición que se quiere apreciar. */
+private const val OPEN_ANIMATION_MS = 450
 
 /**
  * Progreso del morph: 0 = reproductor completo, 1 = integrado en el mini-player.
@@ -55,6 +59,20 @@ internal fun playerBackgroundAlpha(progress: Float): Float =
 
 /** El mini-player aparece a medida que el reproductor se integra en él. */
 internal fun miniPlayerAlpha(progress: Float): Float = smoothstep(0.75f, 0.95f, progress)
+
+/** Radio máximo del desenfoque del fondo, en dp. */
+internal const val PLAYER_BACKDROP_BLUR_DP = 16f
+
+/** Opacidad máxima del scrim del fondo. */
+internal const val PLAYER_BACKDROP_MAX_SCRIM = 0.45f
+
+/**
+ * Intensidad del desenfoque y del oscurecimiento del fondo: cero con el
+ * reproductor completo y cero con el mini-player, máxima a mitad del morph.
+ * Así ambos efectos vuelven a cero al cancelar y el mini queda nítido al llegar.
+ */
+internal fun playerBackdropEffect(progress: Float): Float =
+    smoothstep(0.05f, 0.4f, progress) * (1f - smoothstep(0.6f, 0.78f, progress))
 
 /**
  * Avance de la portada hacia el mini-player. Llega a su destino al 75 % para
@@ -110,12 +128,34 @@ internal class PlayerDismissState(
     private var settleJob: Job? = null
     private var isClosing = false
 
-    /** Deja el panel como recién abierto; se llama al abrir el reproductor. */
-    fun reset() {
+    /**
+     * Apertura desde el mini-player: el panel arranca fuera de pantalla y sube
+     * mientras el morph recorre las mismas curvas del cierre al revés. No hay
+     * una segunda animación que mantener sincronizada.
+     */
+    fun open() {
         settleJob?.cancel()
-        settleJob = null
         isClosing = false
-        offsetPx = 0f
+        val height = heightPx.toFloat()
+        if (height <= 0f) {
+            offsetPx = 0f
+            return
+        }
+        offsetPx = height
+        settleJob = scope.launch {
+            // Entrada suave: acelera y vuelve a frenar, para que se aprecien
+            // tanto el arranque desde el mini como el encaje final.
+            animate(
+                height,
+                0f,
+                animationSpec = tween(
+                    durationMillis = OPEN_ANIMATION_MS,
+                    easing = EaseInOutCubic
+                )
+            ) { value, _ ->
+                offsetPx = value
+            }
+        }
     }
 
     /**
