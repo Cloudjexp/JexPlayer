@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.geometry.Rect
 import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 
@@ -16,7 +17,8 @@ import com.cloudjex.jexplayer.viewmodel.MusicViewModel
 internal fun MiniPlayerHost(
     songs: List<Song>,
     viewModel: MusicViewModel,
-    onOpenPlayer: () -> Unit
+    onOpenPlayer: () -> Unit,
+    onArtworkPositioned: (Rect) -> Unit = {}
 ) {
     val currentSongId by viewModel.currentSongId.collectAsState()
     val restoredSong by viewModel.restoredSong.collectAsState()
@@ -38,7 +40,8 @@ internal fun MiniPlayerHost(
             onNext = { viewModel.nextSong() },
             onShuffle = { viewModel.toggleShuffle() },
             onRepeat = { viewModel.toggleRepeat() },
-            onOpenPlayer = onOpenPlayer
+            onOpenPlayer = onOpenPlayer,
+            onArtworkPositioned = onArtworkPositioned
         )
     }
 }
