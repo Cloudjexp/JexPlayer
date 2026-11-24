@@ -8,14 +8,6 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,6 +27,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.Lifecycle
@@ -46,13 +40,17 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cloudjex.jexplayer.ui.home.HomeScreen
@@ -66,6 +64,9 @@ import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.navigation.JexBottomBar
 import com.cloudjex.jexplayer.ui.navigation.JexBottomBarItem
 import com.cloudjex.jexplayer.ui.player.PlayerScreen
+import com.cloudjex.jexplayer.ui.player.miniPlayerAlpha
+import com.cloudjex.jexplayer.ui.player.playerDismissProgress
+import com.cloudjex.jexplayer.ui.player.rememberPlayerDismissState
 import com.cloudjex.jexplayer.ui.theme.JexPlayerTheme
 import com.cloudjex.jexplayer.data.model.AppearanceTheme
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
@@ -123,6 +124,18 @@ class MainActivity : ComponentActivity() {
                           mutableStateOf<String?>(null)
                       }
                       var pendingOpenFavorites by rememberSaveable { mutableStateOf(false) }
+                      // El gesto horizontal y `appTab` son la misma intención en dos
+                      // sitios: la barra, el back y el estado guardado escriben aquí,
+                      // el pager solo lo refleja al asentarse.
+                      val appPagerState = rememberPagerState(initialPage = appTab) {
+                          APP_PAGE_KEYS.size
+                      }
+                      // El estado del gesto vive aquí: el mini-player necesita el
+                      // mismo progreso para aparecer sincronizado con el morph.
+                      val playerDismissState = rememberPlayerDismissState(
+                          onDismiss = { vm.setShowPlayer(false) }
+                      )
+                      var miniArtworkBounds by remember { mutableStateOf<Rect?>(null) }
                       var floatingContentHeightPx by remember { mutableStateOf(0) }
                       val bottomContentPadding = with(LocalDensity.current) {
                           floatingContentHeightPx.toDp()
@@ -190,12 +203,10 @@ class MainActivity : ComponentActivity() {
                          }
                      }
 
-                    BackHandler(enabled = settingsOpen || restoredScreen == true) {
-                        if (settingsOpen) {
-                            settingsOpen = false
-                        } else {
-                            vm.setShowPlayer(false)
-                        }
+                    // Ajustes manda. El reproductor gestiona su propio atrás desde
+                    // PlayerScreen para poder animar el cierre antes de retirarlo.
+                    BackHandler(enabled = settingsOpen) {
+                        settingsOpen = false
                     }
 
                     // La búsqueda es un destino propio. Recordar de dónde se
@@ -204,6 +215,35 @@ class MainActivity : ComponentActivity() {
                         if (appTab != 1) previousAppTab = appTab
                         appTab = 1
                     }
+
+                    // `settledPage` no cambia mientras el pager se mueve (ni con el
+                    // dedo ni animando): así un salto de dos páginas no escribe la
+                    // intermedia, y no se cancela la animación que lo lleva a la
+                    // destino. Solo se actualiza al asentarse.
+                    LaunchedEffect(appPagerState) {
+                        snapshotFlow { appPagerState.settledPage }
+                            .distinctUntilChanged()
+                            .collect { page ->
+                                if (page == appTab) return@collect
+                                // Mismo criterio que openSearch: atrás devuelve al
+                                // usuario a la sección desde la que llegó.
+                                if (page == 1) previousAppTab = appTab
+                                appTab = page
+                            }
+                    }
+
+                    // Botones, "Abrir favoritos" y el estado guardado mueven el
+                    // pager; el gesto ya lo movió por su cuenta.
+                    LaunchedEffect(appTab) {
+                        if (appPagerState.currentPage != appTab) {
+                            appPagerState.animateScrollToPage(appTab)
+                        }
+                    }
+
+                    // Buscar se compone durante el arrastre, antes de ser visible:
+                    // no debe pedir foco (ni abrir el teclado) hasta estar asentada.
+                    val searchActive = !appPagerState.isScrollInProgress &&
+                        appPagerState.settledPage == 1
 
                     // Con destinos de aplicación, atrás vuelve a Inicio antes de
                     // salir. Nunca compite con el reproductor ni con ajustes.
@@ -214,8 +254,6 @@ class MainActivity : ComponentActivity() {
                     ) {
                         appTab = if (appTab == 1) previousAppTab else 0
                     }
-
-                    val transitionOffsetPx = with(LocalDensity.current) { 20.dp.roundToPx() }
 
                      Scaffold(
                          modifier = Modifier.fillMaxSize(),
@@ -241,50 +279,51 @@ class MainActivity : ComponentActivity() {
                                         onBack = { settingsOpen = false },
                                         onAddFolder = { openFolderPicker() }
                                     )
-                                } else AnimatedContent(
-                                    targetState = screen,
-                                    transitionSpec = {
-                                        if (targetState) {
-                                            (fadeIn(tween(600, easing = FastOutSlowInEasing)) +
-                                                slideInVertically(
-                                                    tween(600, easing = FastOutSlowInEasing)
-                                                ) { transitionOffsetPx })
-                                                .togetherWith(
-                                                    fadeOut(tween(600, easing = FastOutSlowInEasing))
-                                                )
-                                        } else {
-                                            fadeIn(tween(600, easing = FastOutSlowInEasing))
-                                                .togetherWith(
-                                                    fadeOut(tween(600, easing = FastOutSlowInEasing)) +
-                                                        slideOutVertically(
-                                                            tween(600, easing = FastOutSlowInEasing)
-                                                        ) { transitionOffsetPx }
-                                                )
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxSize(),
-                                    label = "screenTransition"
-                                ) { playerOpen ->
-                                    if (playerOpen) {
-                                        PlayerScreen(
-                                            viewModel = vm,
-                                            selectedTab = selectedTab,
-                                            onBack = { vm.setShowPlayer(false) },
-                                            onTabSelected = {
-                                                selectedTab = it
-                                                vm.setShowPlayer(false)
-                                            }
-                                        )
-                                    } else {
-                                        Box(modifier = Modifier.fillMaxSize()) {
-                                            appStateHolder.SaveableStateProvider(
-                                                when (appTab) {
-                                                    0 -> "inicio"
-                                                    1 -> "buscar"
-                                                    else -> "biblioteca"
+                                } else Box(modifier = Modifier.fillMaxSize()) {
+                                    // El contenido principal vive siempre detrás del
+                                    // reproductor: pager, barra y mini-player (una sola
+                                    // instancia) siguen compuestos y listos para la
+                                    // transición hacia el mini-player.
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            // Con el reproductor encima, el fondo no debe
+                                            // recibir toques ni gestos: consumimos todo en
+                                            // la pasada Initial, antes de que el pager, la
+                                            // lista o la barra lo vean.
+                                            .pointerInput(restoredScreen) {
+                                                if (restoredScreen != true) return@pointerInput
+                                                awaitPointerEventScope {
+                                                    while (true) {
+                                                        awaitPointerEvent(
+                                                            PointerEventPass.Initial
+                                                        ).changes.forEach { it.consume() }
+                                                    }
                                                 }
+                                            }
+                                            // Mientras el reproductor está encima, el fondo
+                                            // tampoco existe para TalkBack.
+                                            .then(
+                                                if (restoredScreen == true) {
+                                                    Modifier.clearAndSetSemantics {}
+                                                } else {
+                                                    Modifier
+                                                }
+                                            )
+                                    ) {
+                                        // Un pager, no un `when`: el gesto sigue al
+                                        // dedo y los extremos (Inicio/Biblioteca) se
+                                        // detienen solos. appTab sigue mandando en la
+                                        // barra, el back y el estado guardado.
+                                        HorizontalPager(
+                                            state = appPagerState,
+                                            modifier = Modifier.fillMaxSize(),
+                                            key = { page -> APP_PAGE_KEYS[page] }
+                                        ) { page ->
+                                            appStateHolder.SaveableStateProvider(
+                                                APP_PAGE_KEYS[page]
                                             ) {
-                                                when (appTab) {
+                                                when (page) {
                                                     0 -> DashboardScreen(
                                                         viewModel = vm,
                                                         bottomContentPadding = bottomContentPadding,
@@ -301,6 +340,11 @@ class MainActivity : ComponentActivity() {
                                                         viewModel = vm,
                                                         selectedFolderUri = selectedFolderUri,
                                                         bottomContentPadding = bottomContentPadding,
+                                                        // Con el reproductor abierto, Buscar deja
+                                                        // de estar activa: así suelta el foco y el
+                                                        // teclado no queda abierto detrás.
+                                                        isActive = searchActive &&
+                                                            restoredScreen != true,
                                                         onExit = {
                                                             appTab = previousAppTab
                                                         }
@@ -331,30 +375,73 @@ class MainActivity : ComponentActivity() {
                                                     )
                                                 }
                                             }
+                                        }
 
-                                            Column(
-                                                modifier = Modifier
-                                                    .align(Alignment.BottomCenter)
-                                                    .fillMaxWidth()
-                                                    .onSizeChanged {
-                                                        floatingContentHeightPx = it.height
+                                        Column(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomCenter)
+                                                .fillMaxWidth()
+                                                .onSizeChanged {
+                                                    floatingContentHeightPx = it.height
+                                                }
+                                        ) {
+                                            // El mini-player aparece con el mismo
+                                            // progreso con el que el reproductor se
+                                            // integra en él: una sola instancia, y su
+                                            // alpha no altera medida ni posición.
+                                            Box(
+                                                modifier = Modifier.graphicsLayer {
+                                                    alpha = if (restoredScreen == true) {
+                                                        miniPlayerAlpha(
+                                                            playerDismissProgress(
+                                                                playerDismissState.offsetPx,
+                                                                playerDismissState.heightPx
+                                                            )
+                                                        )
+                                                    } else {
+                                                        1f
                                                     }
+                                                }
                                             ) {
                                                 MiniPlayerHost(
                                                     songs = songs,
                                                     viewModel = vm,
-                                                    onOpenPlayer = { vm.setShowPlayer(true) }
-                                                )
-                                                JexBottomBar(
-                                                    items = APP_BOTTOM_BAR_ITEMS,
-                                                    selectedTab = appTab,
-                                                    onTabSelected = { tab ->
-                                                        if (tab == 1) openSearch()
-                                                        else appTab = tab
+                                                    onOpenPlayer = {
+                                                        playerDismissState.reset()
+                                                        vm.setShowPlayer(true)
+                                                    },
+                                                    onArtworkPositioned = { bounds ->
+                                                        if (bounds != miniArtworkBounds) {
+                                                            miniArtworkBounds = bounds
+                                                        }
                                                     }
                                                 )
                                             }
+                                            JexBottomBar(
+                                                items = APP_BOTTOM_BAR_ITEMS,
+                                                selectedTab = appTab,
+                                                onTabSelected = { tab ->
+                                                    if (tab == 1) openSearch()
+                                                    else appTab = tab
+                                                }
+                                            )
                                         }
+                                    }
+
+                                    // Superpuesto, no intercambiado: el cierre
+                                    // animado lo controla PlayerScreen y el estado
+                                    // compartido retira el overlay al terminar.
+                                    if (restoredScreen == true) {
+                                        PlayerScreen(
+                                            viewModel = vm,
+                                            selectedTab = selectedTab,
+                                            dismissState = playerDismissState,
+                                            miniArtworkBounds = miniArtworkBounds,
+                                            onTabSelected = {
+                                                selectedTab = it
+                                                vm.setShowPlayer(false)
+                                            }
+                                        )
                                     }
                                 }
                             }
@@ -393,3 +480,6 @@ private val APP_BOTTOM_BAR_ITEMS = listOf(
     JexBottomBarItem(icon = JexSymbol.Search, label = "Buscar"),
     JexBottomBarItem(icon = JexSymbol.LibraryMusic, label = "Biblioteca")
 )
+
+/** Claves del SaveableStateHolder, una por página del pager y en su mismo orden. */
+private val APP_PAGE_KEYS = listOf("inicio", "buscar", "biblioteca")

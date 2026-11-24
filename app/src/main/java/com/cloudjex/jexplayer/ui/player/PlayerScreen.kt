@@ -1,14 +1,16 @@
 package com.cloudjex.jexplayer.ui.player
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.MarqueeAnimationMode
@@ -43,13 +45,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.ColorPainter
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
@@ -59,6 +70,7 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -69,6 +81,7 @@ import com.cloudjex.jexplayer.data.model.Song
 import com.cloudjex.jexplayer.data.model.AudioTechnicalInfo
 import com.cloudjex.jexplayer.data.model.displayValues
 import com.cloudjex.jexplayer.data.model.forSong
+import com.cloudjex.jexplayer.ui.home.SongArtwork
 import com.cloudjex.jexplayer.ui.icons.JexSymbol
 import com.cloudjex.jexplayer.ui.icons.JexSymbolIcon
 import com.cloudjex.jexplayer.viewmodel.MusicViewModel
@@ -78,10 +91,11 @@ import kotlin.math.sin
 import com.cloudjex.jexplayer.viewmodel.AudioTagsLoadState
 
 @Composable
-fun PlayerScreen(
+internal fun PlayerScreen(
     viewModel: MusicViewModel,
     selectedTab: Int,
-    onBack: () -> Unit,
+    dismissState: PlayerDismissState,
+    miniArtworkBounds: Rect?,
     onTabSelected: (Int) -> Unit
 ) {
     val songs by viewModel.songs.collectAsState()
@@ -107,19 +121,75 @@ fun PlayerScreen(
     // Estado para controlar si se muestra la pantalla de letra
     var showLyrics by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    // El scroll del contenido se iza aquí para saber si está en el tope y para
+    // que el gesto de cierre pueda seguir al dedo sin tocar el scroll normal.
+    val contentScrollState = rememberScrollState()
+    val dismissConnection = rememberPlayerDismissConnection(
+        state = dismissState,
+        scrollState = contentScrollState
+    )
+
+    // Rectas reales para el morph: la portada del reproductor en reposo y el
+    // origen de este Box, para pasar de coordenadas de ventana a locales.
+    var artworkBounds by remember { mutableStateOf<Rect?>(null) }
+    var rootOrigin by remember { mutableStateOf<Offset?>(null) }
+    val backgroundColor = MaterialTheme.colorScheme.background
+    // El morph de la portada solo tiene sentido si hay destino medido.
+    val morphReady = currentSong != null && artworkBounds != null &&
+        miniArtworkBounds != null && rootOrigin != null
+
+    // La flecha, atrás y el gesto comparten la misma salida animada; el
+    // reproductor se retira cuando el morph ya está completo.
+    // Con las letras abiertas, atrás las cierra primero: el reproductor no debe
+    // deslizarse bajo ellas.
+    BackHandler {
+        if (showLyrics) {
+            showLyrics = false
+        } else {
+            dismissState.close()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { rootOrigin = it.positionInRoot() }
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                // La capa va por fuera del fondo y del padding: el panel entero
+                // se desplaza con el gesto.
+                .graphicsLayer { translationY = dismissState.offsetPx }
+                .onSizeChanged { dismissState.heightPx = it.height }
+                // El fondo cubre también la franja de la barra de navegación y
+                // se apaga con el gesto para dejar ver la app y el mini-player.
+                .drawBehind {
+                    drawRect(
+                        color = backgroundColor,
+                        alpha = playerBackgroundAlpha(
+                            playerDismissProgress(dismissState.offsetPx, dismissState.heightPx)
+                        )
+                    )
+                }
                 .navigationBarsPadding()
-                .background(MaterialTheme.colorScheme.background)
         ) {
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    // Barra, textos, waveform y controles se apagan mientras el
+                    // reproductor se integra en el mini-player.
+                    .graphicsLayer {
+                        alpha = playerContentAlpha(
+                            playerDismissProgress(dismissState.offsetPx, dismissState.heightPx)
+                        )
+                    }
+                    // Solo el contenido normal participa: las letras son
+                    // hermanas en el Box y nunca llegan a esta conexión.
+                    .nestedScroll(dismissConnection)
             ) {
-                PlayerTopBar(onBack = onBack)
+                PlayerTopBar(onBack = dismissState::close)
 
                 if (currentSong == null) {
                     PlayerEmptyState(
@@ -137,6 +207,19 @@ fun PlayerScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
+                        scrollState = contentScrollState,
+                        dismissState = dismissState,
+                        morphReady = morphReady,
+                        onArtworkBounds = { bounds ->
+                            // Solo interesa la recta en reposo: con la lista
+                            // desplazada o el panel en movimiento sería otra.
+                            if (dismissState.offsetPx == 0f &&
+                                contentScrollState.value == 0 &&
+                                artworkBounds != bounds
+                            ) {
+                                artworkBounds = bounds
+                            }
+                        },
                         song = currentSong,
                         isPlaying = isPlaying,
                         isShuffleEnabled = isShuffleEnabled,
@@ -155,6 +238,56 @@ fun PlayerScreen(
                 }
             }
 
+        }
+
+        // Portada del morph: hermana del contenido, fuera del scroll y de su
+        // recorte, viaja desde su posición real hasta la del mini-player.
+        val source = artworkBounds
+        val target = miniArtworkBounds
+        val origin = rootOrigin
+        if (currentSong != null && source != null && target != null &&
+            origin != null && source.width > 0f && target.width > 0f
+        ) {
+            val density = LocalDensity.current
+            val ghostSize = with(density) { source.width.toDp() }
+            Box(
+                modifier = Modifier
+                    .size(ghostSize)
+                    // La portada del reproductor ya se anunciaba: esta copia
+                    // es solo visual.
+                    .clearAndSetSemantics {}
+                    .graphicsLayer {
+                        val progress = playerDismissProgress(
+                            dismissState.offsetPx,
+                            dismissState.heightPx
+                        )
+                        // Solo existe mientras dura el gesto: en reposo manda la
+                        // portada original y así no se superponen dos imágenes.
+                        alpha = if (dismissState.offsetPx > 0f) {
+                            playerArtworkAlpha(progress)
+                        } else {
+                            0f
+                        }
+                        val travel = playerMorphTravel(progress)
+                        val scale =
+                            1f + ((target.width / source.width) - 1f) * travel
+                        translationX =
+                            source.left + (target.left - source.left) * travel - origin.x
+                        translationY =
+                            source.top + (target.top - source.top) * travel - origin.y
+                        scaleX = scale
+                        scaleY = scale
+                        // La esquina es la del reproductor; al llegar, el
+                        // crossfade con el mini tapa cualquier diferencia.
+                        transformOrigin = TransformOrigin(0f, 0f)
+                    }
+            ) {
+                SongArtwork(
+                    song = currentSong,
+                    size = ghostSize,
+                    cornerRadius = 28.dp
+                )
+            }
         }
 
         // Si showLyrics es true, se dibuja encima cubriendo toda la pantalla
@@ -208,6 +341,10 @@ private fun PlayerTopBar(onBack: () -> Unit) {
 @Composable
 private fun PlayerContent(
     modifier: Modifier,
+    scrollState: ScrollState,
+    dismissState: PlayerDismissState,
+    morphReady: Boolean,
+    onArtworkBounds: (Rect) -> Unit,
     song: Song,
     isPlaying: Boolean,
     isShuffleEnabled: Boolean,
@@ -229,7 +366,7 @@ private fun PlayerContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = 24.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -237,7 +374,14 @@ private fun PlayerContent(
                 song = song,
                 size = artworkSize,
                 onClick = onArtworkClick,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .onGloballyPositioned { onArtworkBounds(it.boundsInRoot()) }
+                    // Con el gesto en marcha la dibuja el morph, fuera del
+                    // recorte del scroll: así nunca se ven dos portadas.
+                    .graphicsLayer {
+                        alpha = if (morphReady && dismissState.offsetPx > 0f) 0f else 1f
+                    }
             )
 
             Column(
@@ -413,12 +557,12 @@ private fun InteractiveWaveform(
                     }
                 }
                 .pointerInput(sliderMax) {
-                    detectDragGestures(
+                    detectHorizontalDragGestures(
                         onDragStart = { offset ->
                             isDragging = true
                             draggedFraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
                         },
-                        onDrag = { change, _ ->
+                        onHorizontalDrag = { change, _ ->
                             change.consume()
                             draggedFraction =
                                 (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)

@@ -47,8 +47,11 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -1003,6 +1006,7 @@ internal fun MiniPlayer(
     onShuffle: () -> Unit,
     onRepeat: () -> Unit,
     onOpenPlayer: () -> Unit,
+    onArtworkPositioned: (Rect) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -1023,7 +1027,13 @@ internal fun MiniPlayer(
                     .clickable(onClick = onOpenPlayer),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                SongArtwork(song = song, size = 48.dp, cornerRadius = 12.dp)
+                Box(
+                    modifier = Modifier.onGloballyPositioned {
+                        onArtworkPositioned(it.boundsInRoot())
+                    }
+                ) {
+                    SongArtwork(song = song, size = 48.dp, cornerRadius = 12.dp)
+                }
 
                 Spacer(modifier = Modifier.width(10.dp))
 
