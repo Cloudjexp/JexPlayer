@@ -122,4 +122,20 @@ class PlayerDismissPolicyTest {
         assertEquals(1f, miniPlayerAlpha(1f), 0.0001f)
         assertTrue(miniPlayerAlpha(0.9f) > miniPlayerAlpha(0.8f))
     }
+
+    @Test
+    fun backdropIsZeroWithPlayerAndWithMini() {
+        // Cero al cancelar (reproductor completo) y cero al llegar al mini:
+        // el mini-player nunca queda desenfocado ni oscurecido.
+        assertEquals(0f, playerBackdropEffect(0f), 0.0001f)
+        assertEquals(0f, playerBackdropEffect(0.78f), 0.0001f)
+        assertEquals(0f, playerBackdropEffect(1f), 0.0001f)
+    }
+
+    @Test
+    fun backdropPeaksDuringTheMorph() {
+        assertTrue(playerBackdropEffect(0.5f) > 0.9f)
+        assertTrue(playerBackdropEffect(0.2f) < playerBackdropEffect(0.4f))
+        assertTrue(playerBackdropEffect(0.7f) < playerBackdropEffect(0.5f))
+    }
 }
